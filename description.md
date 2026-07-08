@@ -21,7 +21,7 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 *   **Ctrl+Right-click** an item to try it on in the Dressing Room.
 *   Scrollable **per-character** history (up to 100 rolls) that survives `/reload`.
 
-**Works with Pawn.** If [Pawn](https://www.curseforge.com/wow/addons/pawn) is installed, the upgrade percentage versus your currently equipped item — for your active spec's scale — is shown right under each icon (with an item-level fallback), so you can tell an upgrade from a side-grade at a glance.
+**Works with Pawn.** If [Pawn](https://www.curseforge.com/wow/addons/pawn) is installed, a green upgrade arrow appears on the icon and the upgrade percentage versus your currently equipped item — for your active spec's scale — is shown right under it, so you can tell an upgrade from a side-grade at a glance. Better Dungeon Loot will also **never auto-greed an item Pawn calls an upgrade** — it offers you the roll instead.
 
 **Handy extras.**
 

@@ -46,6 +46,7 @@ local defaults = {
     storageMax = 20,             -- how many entries kept in history (10..100)
     minimapAngle = 200,          -- minimap button position (degrees)
     showPawnUpgrade = true,      -- show Pawn upgrade % under the icon (if Pawn is loaded)
+    dontGreedUpgrades = true,    -- never auto-greed an item Pawn calls an upgrade
 
     scope = "instance",          -- party | instance (party+raid) | everywhere
 }
@@ -207,25 +208,6 @@ local function DecideRoll(rollID, canNeed, canDE, quality)
     return "leave"
 end
 
--- Runs the auto-roll and returns what we did: "greed" | "de" | "need" | "leave".
-local function DecideAndRoll(rollID)
-    if not db.autoRoll or not InScope() then return "leave" end
-    local _, _, _, quality, _, canNeed, canGreed, canDE = GetLootRollItemInfo(rollID)
-    if not canGreed then return "leave" end
-
-    local decision = DecideRoll(rollID, canNeed, canDE, quality)
-    if decision == "greed" then
-        RollOnLoot(rollID, 2)
-        return "greed"
-    elseif decision == "disenchant" then
-        RollOnLoot(rollID, 3)
-        return "de"
-    elseif decision == "need" then
-        RollOnLoot(rollID, 1)
-        return "need"
-    end
-    return "leave"
-end
 
 --------------------------------------------------------------------------------
 -- F4 helpers: read each player's roll from C_LootHistory
@@ -302,7 +284,7 @@ end
 local function RollFromRow(row, rtype)
     local e = row.entry
     if not e or not e.active then return end
-    RollOnLoot(e.rollID, rtype)
+    if not e.test then RollOnLoot(e.rollID, rtype) end
     e.myRoll = rtype
     e.auto = false
     UpdateLog()
@@ -425,7 +407,7 @@ end
 
 -- returns computed(bool), text, r, g, b  (computed=false means "item not cached, retry later")
 local function PawnUpgradeFor(link)
-    if not (PawnIsInitialized and PawnGetItemData and PawnIsItemAnUpgrade) then
+    if not (PawnIsReady and PawnIsReady() and PawnGetItemData and PawnIsItemAnUpgrade) then
         return true, nil
     end
     if not link then return true, nil end
@@ -435,18 +417,38 @@ local function PawnUpgradeFor(link)
     local ok2, up, ilvl = pcall(PawnIsItemAnUpgrade, item)
     if not ok2 then return true, nil end
 
-    if up then
+    if up and #up > 0 then
+        -- prefer the active spec's scale; otherwise fall back to the biggest upgrade
         local active = PawnActiveScaleName()
+        local chosen
         for _, u in ipairs(up) do
-            if u.ScaleName == active then
-                return true, ("+%d%%"):format(math.floor((u.PercentUpgrade or 0) * 100 + 0.5)), 0.2, 1, 0.2
+            if u.ScaleName == active then chosen = u break end
+        end
+        if not chosen then
+            chosen = up[1]
+            for _, u in ipairs(up) do
+                if (u.PercentUpgrade or 0) > (chosen.PercentUpgrade or 0) then chosen = u end
             end
         end
+        return true, ("+%d%%"):format(math.floor((chosen.PercentUpgrade or 0) * 100 + 0.5)), 0, 1, 0, true
     end
     if ilvl and ilvl > 0 then
-        return true, ("ilvl +%d"):format(ilvl), 0.6, 0.8, 1
+        return true, ("ilvl +%d"):format(ilvl), 0.6, 0.8, 1, false
     end
     return true, nil
+end
+
+-- for the "don't auto-greed upgrades" rule: ready(item loaded?), isUpgrade
+local function PawnUpgradeCheck(link)
+    if not (link and PawnIsReady and PawnIsReady() and PawnGetItemData and PawnIsItemAnUpgrade) then
+        return true, false
+    end
+    local ok, item = pcall(PawnGetItemData, link)
+    if not ok then return true, false end
+    if not item or not item.Link then return false, false end  -- not loaded yet
+    local ok2, up = pcall(PawnIsItemAnUpgrade, item)
+    if not ok2 then return true, false end
+    return true, (up ~= nil and #up > 0)
 end
 
 local function CreateRow(parent, index)
@@ -505,12 +507,20 @@ local function CreateRow(parent, index)
     a2:SetFromAlpha(0.3); a2:SetToAlpha(1); a2:SetDuration(0.5); a2:SetOrder(2)
     row.glowAnim = ag
 
-    -- Pawn upgrade % under the icon
+    -- Pawn upgrade arrow (on the icon) + % under it
+    row.upgradeArrow = row.icon:CreateTexture(nil, "OVERLAY")
+    row.upgradeArrow:SetTexture("Interface\\AddOns\\Pawn\\Textures\\UpgradeArrow")
+    row.upgradeArrow:SetSize(18, 18)
+    row.upgradeArrow:SetPoint("TOPLEFT", row.icon, "TOPLEFT", 0, 1)
+    row.upgradeArrow:Hide()
+
     row.upgrade = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.upgrade:SetPoint("TOP", row.icon, "BOTTOM", 0, -1)
+    row.upgrade:SetPoint("TOP", row.icon, "BOTTOM", 0, -4)
     row.upgrade:SetWidth(46)
     row.upgrade:SetJustifyH("CENTER")
     row.upgrade:SetWordWrap(false)
+    row.upgrade:SetShadowColor(0, 0, 0, 1)
+    row.upgrade:SetShadowOffset(1, -1)
 
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 44, -2)
@@ -581,26 +591,42 @@ local function BindRow(row, e)
     row.icon.link = e.link
     row.name:SetText(QualityColoredName(e))
 
-    if db.showPawnUpgrade then
+    if db.showPawnUpgrade or e.test then
         if not e.pawnDone then
-            local done, txt, r, g, b = PawnUpgradeFor(e.link)
-            if done then
+            local _, txt, r, g, b, isUp = PawnUpgradeFor(e.link)
+            local tries = e.pawnTries or 0
+            if txt ~= nil or tries >= 5 then
+                -- cache a real result, or give up: Pawn's hidden-tooltip scan is
+                -- often empty right after a drop, so retry a few times first
                 e.pawnDone = true
-                e.pawnText, e.pawnR, e.pawnG, e.pawnB = txt, r, g, b
+                e.pawnText, e.pawnR, e.pawnG, e.pawnB, e.pawnArrow = txt, r, g, b, isUp
+            else
+                e.pawnTries = tries + 1
+                if C_Timer and C_Timer.After then
+                    C_Timer.After(0.6, function()
+                        if e and not e.pawnDone then UpdateLog() end
+                    end)
+                end
             end
         end
         row.upgrade:SetText(e.pawnText or "")
         if e.pawnText then row.upgrade:SetTextColor(e.pawnR or 1, e.pawnG or 1, e.pawnB or 1) end
+        row.upgradeArrow:SetShown(e.pawnArrow and true or false)
     else
         row.upgrade:SetText("")
+        row.upgradeArrow:Hide()
     end
 
     local isAuto = (e.auto and e.myRoll) and true or false
     row.autoTag:SetShown(isAuto)
 
     if e.active and not isAuto then
-        local left = GetLootRollTimeLeft and GetLootRollTimeLeft(e.rollID)
-        row.timer:SetText((left and left > 0) and (math.ceil(left / 1000) .. "s") or "")
+        if e.test then
+            row.timer:SetText(e.fakeTimer or "")
+        else
+            local left = GetLootRollTimeLeft and GetLootRollTimeLeft(e.rollID)
+            row.timer:SetText((left and left > 0) and (math.ceil(left / 1000) .. "s") or "")
+        end
     else
         row.timer:SetText("")
     end
@@ -737,7 +763,7 @@ local function CreateLogFrame()
         for i = 1, MAX_POOL do
             local row = rows[i]
             local ent = row.entry
-            if row:IsShown() and ent and ent.active and not ent.auto then
+            if row:IsShown() and ent and ent.active and not ent.auto and not ent.test then
                 local left = GetLootRollTimeLeft and GetLootRollTimeLeft(ent.rollID)
                 if not left or left <= 0 then
                     ent.active = false
@@ -896,6 +922,61 @@ local function ToggleLog()
 end
 
 --------------------------------------------------------------------------------
+-- Test mode: fill the window with sample rows to preview the layout
+--------------------------------------------------------------------------------
+
+local testMode, realLog = false, nil
+
+local function BuildTestData()
+    local _, myClass = UnitClass("player")
+    return {
+        {   -- pending, needs a roll (pulses; Need/Greed/Pass/DE + Pawn %)
+            rollID = -1, name = "Greatsword of Testing", texture = "Interface\\Icons\\INV_Sword_39",
+            quality = 4, canNeed = true, canGreed = true, canDE = true,
+            action = "leave", active = true, test = true, fakeTimer = "58s",
+            pawnDone = true, pawnText = "+18%", pawnR = 0, pawnG = 1, pawnB = 0, pawnArrow = true,
+        },
+        {   -- pending, not usable by class (no Need button)
+            rollID = -2, name = "Cloth Hood of the Wrong Class", texture = "Interface\\Icons\\INV_Helmet_24",
+            quality = 3, canNeed = false, canGreed = true, canDE = true,
+            action = "leave", active = true, test = true, fakeTimer = "58s", pawnDone = true,
+        },
+        {   -- auto-greeded (shows your token + "Auto")
+            rollID = -3, name = "Leather Belt of Filler", texture = "Interface\\Icons\\INV_Belt_15",
+            quality = 3, action = "greed", myRoll = 2, auto = true, active = false, test = true, pawnDone = true,
+            players = { { name = "You", class = myClass, rollType = 2, isWinner = false, isMe = true } },
+        },
+        {   -- resolved, several rollers, a winner (crown)
+            rollID = -4, name = "Contested Trinket of Envy", texture = "Interface\\Icons\\INV_Jewelry_Trinket_04",
+            quality = 4, action = "leave", myRoll = 1, auto = false, active = false, test = true,
+            pawnDone = true, pawnText = "ilvl +8", pawnR = 0.6, pawnG = 0.8, pawnB = 1,
+            players = {
+                { name = "You", class = myClass, rollType = 1, isWinner = true, isMe = true },
+                { name = "Sneakyy", class = "ROGUE", rollType = 1 },
+                { name = "Frostina", class = "MAGE", rollType = 2 },
+                { name = "Healbot", class = "PRIEST", rollType = 0 },
+            },
+        },
+    }
+end
+
+local function ToggleTest()
+    testMode = not testMode
+    if testMode then
+        realLog = log
+        log = BuildTestData()
+        autoOpened = false
+        ShowLog()
+        Print("test mode ON - sample data. /bdl test again to restore your log.")
+    else
+        log = realLog or {}
+        realLog = nil
+        UpdateLog()
+        Print("test mode OFF.")
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Options panel (Settings canvas) + minimap button
 --------------------------------------------------------------------------------
 
@@ -1007,7 +1088,11 @@ local function BuildOptions()
         function() return db.showPawnUpgrade end,
         function(v) db.showPawnUpgrade = v; UpdateLog() end)
 
-    AddCheck(panel, 24, -360, "Enchanters: disenchant instead of greed",
+    AddCheck(panel, 24, -360, "Never auto-greed a Pawn upgrade (offer the roll)",
+        function() return db.dontGreedUpgrades end,
+        function(v) db.dontGreedUpgrades = v end)
+
+    AddCheck(panel, 24, -388, "Enchanters: disenchant instead of greed",
         function() return db.enchanterDisenchant end,
         function(v) db.enchanterDisenchant = v end)
 
@@ -1103,6 +1188,56 @@ local function SetupHideBlizzard()
 end
 
 --------------------------------------------------------------------------------
+-- Auto-roll dispatch (defers greed while Pawn checks for an upgrade)
+--------------------------------------------------------------------------------
+
+local function AutoRoll_Apply(e, rollID, decision)
+    local rt = (decision == "need" and 1) or (decision == "greed" and 2) or (decision == "disenchant" and 3)
+    if not rt then return end
+    RollOnLoot(rollID, rt)
+    e.myRoll = rt
+    e.action = (decision == "disenchant") and "de" or decision
+    e.auto = true
+    UpdateLog()
+end
+
+local function AutoRoll_Leave(e)
+    e.action = "leave"
+    e.auto = false
+    e.myRoll = nil
+    if not IsLogShown() then autoOpened = true end
+    ShowLog()
+end
+
+local DecideAndApply
+DecideAndApply = function(rollID, tries)
+    local e
+    for _, x in ipairs(log) do if x.rollID == rollID then e = x break end end
+    if not e or e.myRoll or not e.active then return end  -- already handled/gone
+
+    if not db.autoRoll or not InScope() then AutoRoll_Leave(e) return end
+
+    local _, _, _, quality, _, canNeed, canGreed, canDE = GetLootRollItemInfo(rollID)
+    if not canGreed then AutoRoll_Leave(e) return end
+
+    local decision = DecideRoll(rollID, canNeed, canDE, quality)
+    if decision == "leave" then AutoRoll_Leave(e) return end
+
+    -- don't auto-greed something Pawn flags as an upgrade; wait for Pawn to load first
+    if db.dontGreedUpgrades and (decision == "greed" or decision == "disenchant") then
+        local ready, isUp = PawnUpgradeCheck(e.link)
+        if isUp then AutoRoll_Leave(e) return end
+        if not ready and (tries or 0) < 5 and C_Timer and C_Timer.After then
+            C_Timer.After(0.5, function() DecideAndApply(rollID, (tries or 0) + 1) end)
+            UpdateLog()  -- keep it visible as pending while we wait
+            return
+        end
+    end
+
+    AutoRoll_Apply(e, rollID, decision)
+end
+
+--------------------------------------------------------------------------------
 -- Event dispatch
 --------------------------------------------------------------------------------
 
@@ -1145,14 +1280,8 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         Print("loaded. /bdl for commands.")
 
     elseif event == "START_LOOT_ROLL" then
-        local action = DecideAndRoll(arg1)
-        AddRoll(arg1, action)
-        if action == "leave" then
-            if not IsLogShown() then autoOpened = true end
-            ShowLog()   -- needs a manual decision: pop the window to roll
-        else
-            UpdateLog() -- auto-handled: just record (silent if the log is hidden)
-        end
+        AddRoll(arg1, "leave")     -- add as pending; the dispatcher decides the auto-roll
+        DecideAndApply(arg1, 0)
 
     elseif event == "CANCEL_LOOT_ROLL" then
         for _, e in ipairs(log) do
@@ -1204,6 +1333,7 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         Print("commands:")
         Print("  /bdl status   - show current settings")
         Print("  /bdl log      - show/hide the loot-log window")
+        Print("  /bdl test     - fill the window with sample rows (preview layout)")
         Print("  /bdl config   - open the settings panel")
         Print("  /bdl autoroll - toggle auto-greed of wrong-armor items (F3)")
         Print("  /bdl fitting  - fitting items: leave <-> auto-need")
@@ -1214,6 +1344,8 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         ShowStatus()
     elseif msg == "log" then
         ToggleLog()
+    elseif msg == "test" then
+        ToggleTest()
     elseif msg == "config" or msg == "options" then
         OpenSettings()
     elseif msg == "autoroll" then

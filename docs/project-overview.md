@@ -115,12 +115,18 @@ Extras: **Ctrl+Right-click** an item icon opens the Dressing Room
 manually stay open). History is **per-character** (see SavedVariables).
 
 ### F7 — Pawn integration (optional)
-When Pawn is loaded, the upgrade percentage versus your currently equipped item is
-shown under the icon. It uses `PawnGetItemData(link)` + `PawnIsItemAnUpgrade(item)`
-and picks the entry for the character's **active** class/spec scale
-(`PawnFindScaleForSpec`), falling back to an item-level delta. Uncached items are
-recomputed on `GET_ITEM_INFO_RECEIVED`; everything is guarded so a missing Pawn is
-a no-op. `## OptionalDeps: Pawn` ensures load order.
+When Pawn is loaded, a green upgrade arrow is drawn on the item icon and the
+upgrade percentage versus your currently equipped item is shown under it. It uses
+`PawnGetItemData(link)` + `PawnIsItemAnUpgrade(item)` and picks the entry for the
+character's **active** class/spec scale (`PawnFindScaleForSpec`), falling back to
+the biggest visible-scale % and then to an item-level delta. Readiness is gated on
+`PawnIsReady()` (Pawn's `PawnIsInitialized` is a local); the hidden-tooltip scan is
+often empty right after a drop, so results are retried for a couple of seconds.
+
+With **"Never auto-greed a Pawn upgrade"** on (default), the auto-roll dispatcher
+(`DecideAndApply`) waits for Pawn before greeding: if the item is an upgrade it is
+left for a manual roll; otherwise it greeds as usual. Everything is guarded so a
+missing Pawn is a no-op. `## OptionalDeps: Pawn` ensures load order.
 
 ### F6 — Settings + minimap button
 - **Minimap button** (dice icon): left-click toggles the window, right-click opens

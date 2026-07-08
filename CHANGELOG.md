@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0] - 2026-07-08
+### Added
+- Option "Never auto-greed a Pawn upgrade" — items Pawn considers an upgrade are
+  left for you to roll on instead of being auto-greeded.
+- `/bdl test` fills the window with sample rows so you can preview the layout.
+
+### Changed
+- Pawn upgrade display: a green upgrade arrow now sits on the item icon, with the
+  percentage shown below it (with a shadow for readability).
+
+### Fixed
+- Pawn upgrade percentage not showing at all (readiness check now uses
+  `PawnIsReady`).
+
 ## [1.1.0] - 2026-07-08
 ### Added
 - Per-character loot history — each character keeps its own log.
