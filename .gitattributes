@@ -1,0 +1,11 @@
+# Normalize line endings; keep shipped Lua/TOC consistent across machines.
+* text=auto eol=lf
+*.png binary
+
+# Keep dev-only files out of `git archive` release zips.
+docs/           export-ignore
+.gitattributes  export-ignore
+.gitignore      export-ignore
+README.md       export-ignore
+CHANGELOG.md    export-ignore
+description.md  export-ignore
