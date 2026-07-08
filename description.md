@@ -18,12 +18,14 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 *   Items that still need your decision are pinned to the top and **pulse** for attention — roll Need / Greed / Pass / Disenchant right there.
 *   Once rolled, the item shows **who rolled Need** as class-coloured circles, with a crown over the winner — great for spotting ninja looters.
 *   Closed the window? A drop that needs a roll **opens it automatically**, then closes again once there's nothing left to roll.
-*   **Ctrl+Right-click** an item to try it on in the Dressing Room. With **Pawn** installed, the upgrade % versus your equipped gear appears under the icon.
+*   **Ctrl+Right-click** an item to try it on in the Dressing Room.
 *   Scrollable **per-character** history (up to 100 rolls) that survives `/reload`.
+
+**Works with Pawn.** If [Pawn](https://www.curseforge.com/wow/addons/pawn) is installed, the upgrade percentage versus your currently equipped item — for your active spec's scale — is shown right under each icon (with an item-level fallback), so you can tell an upgrade from a side-grade at a glance.
 
 **Handy extras.**
 
-![bdl settings](https://media.forgecdn.net/attachments/1778/974/screenshot-2026-07-07-230303-png.png)
+![bdl settings](https://media.forgecdn.net/attachments/1779/568/screenshot-2026-07-08-071630-png.png)
 
 *   Optionally auto-greed gems/reagents/materials, all green (uncommon) items, or drops for a slot where you already wear an heirloom.
 *   "Wrong armor type" mode also greeds weapons your character can't use.
