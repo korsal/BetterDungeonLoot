@@ -17,7 +17,7 @@ them with a compact, movable **loot log** that also shows who rolled Need
 |----|---------|-------|
 | F1 | Auto-confirm BoP bind popups | `CONFIRM_LOOT_ROLL` / `LOOT_BIND_CONFIRM` |
 | F2 | Hide Blizzard roll frames | Superseded by the log window |
-| F3 | Smart auto-greed | Two modes: wrong-armor-type, or "anything I can't use" |
+| F3 | Smart auto-greed | Three modes: wrong-armor-type, "anything I can't use", or "greed non-upgrades (Pawn)" |
 | F4 | Show who rolled Need | Class-coloured tokens, ninja detection |
 | F5 | Loot-log window | Roll/try-on from it; auto-open/close; per-character; `/reload`-safe |
 | F6 | Settings panel + minimap button | Sliders, mode radios, greed toggles |
@@ -54,16 +54,35 @@ and the item link via `GetLootRollItemLink(rollID)`, then decides an action:
   (`canNeed == false`).
 - In **"armor"** mode, weapons the character can't equip (`canNeed == false`) are
   also greeded.
+- **Mode "pawn"** (only selectable when Pawn is loaded): greeds **everything that
+  isn't a Pawn upgrade**; items Pawn flags as an upgrade for your active spec are
+  left for a manual roll. The upgrade check is the same Pawn deferral used by the
+  "never auto-greed a Pawn upgrade" rule (see F7) — the roll is held as pending
+  until Pawn has scanned the item. If Pawn becomes unavailable, this mode falls
+  back to only greeding what the character can't use, so it never greeds a keeper.
 - Optional blanket toggles: **all green (uncommon) items**, and drops for a slot
-  where you already wear an **heirloom** (checked via `GetInventoryItemQuality`,
-  quality 7). Both greed regardless of mode.
-- Enchanters may choose **Disenchant instead of Greed** for the greeded items.
+  where you already wear a **still-scaling heirloom** (quality 7 via
+  `GetInventoryItemQuality`). Both greed regardless of mode, and the heirloom greed
+  is **final** — it beats the Pawn upgrade check, so a drop Pawn rates higher than
+  your heirloom is still greeded (you keep the heirloom). Once you out-level the
+  heirloom's scaling cap the slot stops being force-greeded (see below).
 - Items you *can* use are left alone (the window opens so you decide), unless
-  `fittingBehavior = "need"` is set, which auto-Needs them.
+  `fittingBehavior = "need"` is set, which auto-Needs them (not applied in "pawn"
+  mode, where fit is decided by the upgrade check).
 
 Armour type is read from `GetItemInfo(link)` returns **classID (#12)** and
 **subclassID (#13)** plus **equipLoc (#9)** — non-localised, so it is locale-safe.
 If the item isn't cached yet the addon does nothing (never risks a wrong roll).
+
+**Heirloom scaling cap.** An equipped heirloom only counts for the greed rule while
+it is still scaling. The cap is read from the heirloom's tooltip line
+`Requires level 1 to 85 (53)` — `85` is the level it scales up to and `(53)` is the
+level it is currently scaled to (`= min(playerLevel, cap)`). The parser matches the
+`<cap> (<scaledLevel>)` shape and validates `scaledLevel == min(playerLevel, cap)`,
+so it needs no localized words; the cap is cached per itemID. `C_Heirloom` /
+`GetDetailedItemLevelInfo` do **not** expose the cap on this build (item level reads
+as 1), so the tooltip is the source of truth. `/bdl heirloom` prints the parsed cap
+and working state for each equipped heirloom.
 
 Preferred armour subclass (threshold: level 40):
 
@@ -96,8 +115,17 @@ are shown (raids usually use different loot rules anyway).
 The window replaces Blizzard's roll frames. For each recent drop it shows the
 item icon, name (quality-coloured), and either:
 - **roll buttons** (Need / Greed / Pass, plus Disenchant when possible) if the
-  item still needs your decision — the icon **pulses** to draw attention; or
+  item still needs your decision — the icon **pulses** to draw attention, and a
+  **countdown bar** under the row fills down as the roll timer runs out
+  (green > 50% > yellow > 25% > red); or
 - **class-circle tokens** (F4) once you've rolled or the roll has ended.
+
+The countdown bar's fraction is `GetLootRollTimeLeft(rollID) / rollTime`, where
+`rollTime` is the total time captured from `START_LOOT_ROLL(rollID, rollTime)`.
+After a `/reload` re-arms a live roll the original `rollTime` is gone, so the bar
+falls back to the largest remaining time it has observed for that roll. It is
+updated on the window's 0.2s `OnUpdate` tick alongside the numeric timer, hides
+once you've rolled, and can be disabled (`showTimerBar`).
 
 Ordering: items still awaiting a roll are pinned to the top; once you roll, the
 item drops below the remaining pending ones. The viewport grows so every pending
@@ -133,10 +161,16 @@ missing Pawn is a no-op. `## OptionalDeps: Pawn` ensures load order.
   settings; draggable around the minimap (angle saved).
 - **Settings panel** (Settings canvas, `/bdl config`):
   - rows shown (1–5), history size (10–100);
-  - auto-greed mode radios ("can't equip/use" vs "wrong armor type");
+  - auto-greed mode radios ("can't equip/use", "wrong armor type", and — when
+    Pawn is loaded — "greed non-upgrades (Pawn)");
   - checkboxes: auto-greed materials, all greens, heirloom-slot drops;
-  - show Pawn upgrade %; never auto-greed a Pawn upgrade;
-  - enchanters: disenchant instead of greed.
+  - never auto-greed a Pawn upgrade (**shown only when Pawn is loaded**);
+  - show the countdown bar on pending rolls (`showTimerBar`).
+
+Pawn-dependent controls are hidden when Pawn isn't loaded: the "greed
+non-upgrades (Pawn)" mode radio and the "never auto-greed a Pawn upgrade"
+checkbox. The upgrade % / arrow (F7) likewise has **no toggle** — it is shown
+automatically whenever Pawn is loaded and hidden otherwise.
 
 Panel construction is wrapped in `pcall` so a template mismatch can't break load.
 
@@ -181,10 +215,10 @@ selects the window into the full history.
 
 ### SavedVariables
 - **`BetterDungeonLootDB`** (account-wide) — settings:
-  `enabled, autoConfirmBind, autoRoll, fittingBehavior, enchanterDisenchant,
+  `enabled, autoConfirmBind, autoRoll, fittingBehavior,
   autoRollMode, autoGreedResources, autoGreedGreens, autoGreedHeirloomSlot,
-  showNeeders, showPawnUpgrade, hideBlizzardRoll, logShown, logPoint, rowCount,
-  storageMax, minimapAngle, scope`.
+  showNeeders, showTimerBar, hideBlizzardRoll, logShown, logPoint,
+  rowCount, storageMax, minimapAngle, scope`.
 - **`BetterDungeonLootCharDB`** (per-character) — `log` (the roll history).
 
 `dbVersion` / `DB_VERSION` is present for migrations (v2 moved the history from the
@@ -198,6 +232,7 @@ account DB to a per-character DB).
 - `/bdl config` — open the settings panel
 - `/bdl log` — show/hide the window
 - `/bdl test` — fill the window with sample rows (preview the layout)
+- `/bdl heirloom` — dump the parsed scaling cap / working state of equipped heirlooms
 - `/bdl autoroll` — toggle auto-greed
 - `/bdl fitting` — leave ↔ auto-need for usable items
 - `/bdl needers` — toggle the Need tokens

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.0] - 2026-07-09
+### Added
+- Countdown bar on rolls that still need your decision: a coloured bar under each
+  pending item fills down as the timer runs out (green → yellow → red), so you can
+  see at a glance how long is left to roll. Can be turned off in the settings panel.
+- New auto-greed mode (shown only when Pawn is installed): **greed everything that
+  isn't a Pawn upgrade** — actual upgrades for your active spec are left for you to
+  roll on, everything else is greeded.
+
+### Changed
+- The Pawn upgrade % / arrow now shows automatically whenever Pawn is installed —
+  the separate "Show upgrade % vs equipped" toggle has been removed (it was
+  redundant).
+- Heirloom-slot auto-greed now takes priority over Pawn: a drop for a slot you fill
+  with an heirloom is greeded even if Pawn rates it as an upgrade (you keep the
+  heirloom). Previously the "never auto-greed a Pawn upgrade" rule could override it.
+- ...but only while the heirloom is still scaling: once you out-level its cap
+  (the "Requires level 1 to 80/85" range), that slot is no longer force-greeded, so
+  genuine upgrades replacing a dead heirloom go to a normal roll again.
+
+### Removed
+- The "Enchanters: disenchant instead of greed" option (disenchant-on-roll isn't
+  supported on this MoP Classic build).
+
 ## [1.2.0] - 2026-07-08
 ### Added
 - Option "Never auto-greed a Pawn upgrade" — items Pawn considers an upgrade are

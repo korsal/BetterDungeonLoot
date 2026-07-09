@@ -10,12 +10,13 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 
 *   _Anything I can't equip/use_ — greeds everything your character can't roll Need on.
 *   _Wrong armor type (smart)_ — greeds body armor that isn't your class's armor type for your level (e.g. cloth/leather for a plate class), and leaves the rest to you.
+*   _Greed everything that isn't an upgrade_ — with [Pawn](https://www.curseforge.com/wow/addons/pawn) installed, greeds every drop Pawn doesn't consider an upgrade for your spec, and leaves real upgrades for you to roll on.
 
 **Auto-confirm binding.** The "this item will become soulbound" confirmation is accepted for you, so blue+ drops don't interrupt you mid-fight.
 
 **A clean loot log instead of centre-screen clutter.** Blizzard's roll frames are hidden and replaced by a small, movable window:
 
-*   Items that still need your decision are pinned to the top and **pulse** for attention — roll Need / Greed / Pass / Disenchant right there.
+*   Items that still need your decision are pinned to the top and **pulse** for attention — roll Need / Greed / Pass / Disenchant right there, with a **countdown bar** (green → yellow → red) showing how long you have left to roll.
 *   Once rolled, the item shows **who rolled Need** as class-coloured circles, with a crown over the winner — great for spotting ninja looters.
 *   Closed the window? A drop that needs a roll **opens it automatically**, then closes again once there's nothing left to roll.
 *   **Ctrl+Right-click** an item to try it on in the Dressing Room.
@@ -29,7 +30,6 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 
 *   Optionally auto-greed gems/reagents/materials, all green (uncommon) items, or drops for a slot where you already wear an heirloom.
 *   "Wrong armor type" mode also greeds weapons your character can't use.
-*   Enchanters can auto-disenchant instead of greed.
 *   Minimap button (left-click: window, right-click: settings).
 *   Settings panel: rows shown (1–5), history size (10–100), auto-greed mode, and more.
 

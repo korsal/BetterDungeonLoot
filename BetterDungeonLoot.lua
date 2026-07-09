@@ -29,8 +29,7 @@ local defaults = {
     -- F3
     autoRoll = true,
     fittingBehavior = "leave",   -- leave | need
-    enchanterDisenchant = false,
-    autoRollMode = "armor",      -- armor (wrong armor type) | cantuse (anything unusable)
+    autoRollMode = "armor",      -- armor (wrong armor type) | cantuse (anything unusable) | pawn (greed non-upgrades)
     autoGreedResources = true,   -- greed gems / reagents / trade goods
     autoGreedGreens = true,      -- greed all uncommon (green) items
     autoGreedHeirloomSlot = true, -- greed drops for slots you fill with an heirloom
@@ -45,8 +44,8 @@ local defaults = {
     rowCount = 2,                -- how many log rows to show (1..5)
     storageMax = 20,             -- how many entries kept in history (10..100)
     minimapAngle = 200,          -- minimap button position (degrees)
-    showPawnUpgrade = true,      -- show Pawn upgrade % under the icon (if Pawn is loaded)
     dontGreedUpgrades = true,    -- never auto-greed an item Pawn calls an upgrade
+    showTimerBar = true,         -- show a countdown bar on rolls still awaiting a decision
 
     scope = "instance",          -- party | instance (party+raid) | everywhere
 }
@@ -128,8 +127,8 @@ local function PreferredArmorSubclass()
     return nil
 end
 
--- "greed"/"disenchant" for clearly wrong-armor body pieces; "need" if configured
--- to auto-need fitting items; otherwise "leave" (let the player decide).
+-- "greed" for items the chosen mode decides against; "need" if configured to
+-- auto-need fitting items; otherwise "leave" (let the player decide).
 -- equip location -> character inventory slot id(s), for the heirloom-slot check
 local EQUIPLOC_SLOTS = {
     INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 },
@@ -143,16 +142,67 @@ local EQUIPLOC_SLOTS = {
 }
 local HEIRLOOM_QUALITY = 7
 
+-- hidden tooltip for reading an item link's text lines (see porting notes)
+local bdlScanTip
+local function ItemTooltipLines(link)
+    if not bdlScanTip then
+        bdlScanTip = CreateFrame("GameTooltip", "BDLScanTooltip", nil, "GameTooltipTemplate")
+    end
+    bdlScanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    bdlScanTip:ClearLines()
+    local ok = pcall(function() bdlScanTip:SetHyperlink(link) end)
+    local lines = {}
+    if ok then
+        for i = 1, bdlScanTip:NumLines() do
+            local fs = _G["BDLScanTooltipTextLeft" .. i]
+            lines[#lines + 1] = (fs and fs:GetText()) or ""
+        end
+    end
+    return lines
+end
+
+-- Heirloom scaling cap. Heirloom tooltips carry a line like
+-- "Requires level 1 to 85 (53)": 85 is the level this heirloom scales up to and
+-- (53) is the level it is currently scaled to (= min(playerLevel, cap)). We read
+-- the cap from that "<cap> (<scaledLevel>)" shape, validated against the player's
+-- level, so it stays locale-independent (no reliance on the "Requires level" text).
+-- Cached per itemID (a heirloom's cap never changes). Returns a number or nil.
+local heirloomCapCache = {}
+local function HeirloomCap(link)
+    local itemID = tonumber(link:match("item:(%d+)"))
+    if itemID and heirloomCapCache[itemID] then return heirloomCapCache[itemID] end
+    local plvl = UnitLevel("player") or 0
+    local cap
+    for _, t in ipairs(ItemTooltipLines(link)) do
+        for c, scaled in t:gmatch("(%d+)%s*%((%d+)%)") do
+            c, scaled = tonumber(c), tonumber(scaled)
+            if c and scaled and c <= 200 and scaled == math.min(plvl, c) then
+                cap = c
+                break
+            end
+        end
+        if cap then break end
+    end
+    if itemID and cap then heirloomCapCache[itemID] = cap end
+    return cap
+end
+
+-- true only when the slot holds an heirloom that is STILL scaling at the player's
+-- level (level <= cap). A capped heirloom (level past its cap) no longer helps, so
+-- it's treated as "no heirloom" here — real upgrades for that slot stop being
+-- greeded. If the cap can't be parsed we keep the old behavior (treat as working).
 local function SlotHasHeirloom(equipLoc)
     local slots = EQUIPLOC_SLOTS[equipLoc]
     if not slots then return false end
+    local plvl = UnitLevel("player") or 0
     for _, slot in ipairs(slots) do
+        local link = GetInventoryItemLink("player", slot)
         local q = GetInventoryItemQuality("player", slot)
-        if not q then
-            local link = GetInventoryItemLink("player", slot)
-            if link then q = select(3, GetItemInfo(link)) end
+        if not q and link then q = select(3, GetItemInfo(link)) end
+        if q == HEIRLOOM_QUALITY and link then
+            local cap = HeirloomCap(link)
+            if not cap or plvl <= cap then return true end
         end
-        if q == HEIRLOOM_QUALITY then return true end
     end
     return false
 end
@@ -160,35 +210,44 @@ end
 -- Gem (3), Reagent (5), Trade Goods (7) — the "materials" bucket
 local RESOURCE_CLASSES = { [3] = true, [5] = true, [7] = true }
 
-local function DecideRoll(rollID, canNeed, canDE, quality)
+local function DecideRoll(rollID, canNeed, quality)
     local link = GetLootRollItemLink and GetLootRollItemLink(rollID)
     if not link then return "leave" end
     local _, _, _, _, _, _, _, _, equipLoc, _, _, classID, subclassID = GetItemInfo(link)
 
-    local function greedOrDE()
-        if db.enchanterDisenchant and canDE then return "disenchant" end
-        return "greed"
-    end
-
     -- gems / reagents / crafting materials
     if db.autoGreedResources and classID and RESOURCE_CLASSES[classID] then
-        return greedOrDE()
+        return "greed"
     end
 
     -- all green (uncommon) items
     if db.autoGreedGreens and quality == 2 then
-        return greedOrDE()
+        return "greed"
     end
 
-    -- slot is already filled by an heirloom (regular drops there aren't upgrades)
+    -- slot is filled by a still-scaling heirloom: keep the heirloom no matter what
+    -- Pawn says (second return = "final", bypasses the Pawn gate). SlotHasHeirloom
+    -- returns false once the heirloom is past its scaling cap, so a capped heirloom
+    -- no longer forces a greed on genuine upgrades.
     if db.autoGreedHeirloomSlot and equipLoc and SlotHasHeirloom(equipLoc) then
-        return greedOrDE()
+        return "greed", true
     end
 
-    if db.autoRollMode == "cantuse" then
+    if db.autoRollMode == "pawn" then
+        -- greed everything that isn't a Pawn upgrade; DecideAndApply's Pawn check
+        -- holds actual upgrades back for a manual roll. If Pawn isn't available
+        -- (not loaded / not ready) we can't judge upgrades, so fall back to only
+        -- greeding what the character can't use and never risk greeding a keeper.
+        local pawnOK = PawnIsReady and PawnIsReady() and PawnGetItemData and PawnIsItemAnUpgrade
+        if pawnOK then
+            return "greed"
+        elseif not canNeed then
+            return "greed"
+        end
+    elseif db.autoRollMode == "cantuse" then
         -- greed anything this character can't equip/use at all
         if not canNeed then
-            return greedOrDE()
+            return "greed"
         end
     else
         -- "armor": greed body armor that isn't your class's armor type,
@@ -197,10 +256,10 @@ local function DecideRoll(rollID, canNeed, canDE, quality)
         if classID == ITEM_CLASS_ARMOR and BODY_ARMOR_SLOTS[equipLoc] then
             local pref = PreferredArmorSubclass()
             if pref and subclassID and subclassID ~= pref then
-                return greedOrDE()
+                return "greed"
             end
         elseif classID == ITEM_CLASS_WEAPON and not canNeed then
-            return greedOrDE()
+            return "greed"
         end
     end
 
@@ -405,6 +464,12 @@ local function PawnActiveScaleName()
     return PawnFindScaleForSpec(classID, specID)
 end
 
+-- Pawn present at all? (installed + enabled → its API globals exist). The upgrade
+-- % display is shown automatically whenever this is true; no separate toggle.
+local function PawnLoaded()
+    return (PawnGetItemData and PawnIsItemAnUpgrade) and true or false
+end
+
 -- returns computed(bool), text, r, g, b  (computed=false means "item not cached, retry later")
 local function PawnUpgradeFor(link)
     if not (PawnIsReady and PawnIsReady() and PawnGetItemData and PawnIsItemAnUpgrade) then
@@ -531,6 +596,19 @@ local function CreateRow(parent, index)
     row.timer = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.timer:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -3)
 
+    -- countdown bar along the bottom of the row while the item awaits a decision
+    row.timerBar = CreateFrame("StatusBar", nil, row)
+    row.timerBar:SetPoint("TOPLEFT", row, "TOPLEFT", 44, -54)
+    row.timerBar:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -54)
+    row.timerBar:SetHeight(9)
+    row.timerBar:SetMinMaxValues(0, 1)
+    row.timerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    row.timerBar.bg = row.timerBar:CreateTexture(nil, "BACKGROUND")
+    row.timerBar.bg:SetAllPoints()
+    row.timerBar.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    row.timerBar.bg:SetVertexColor(0, 0, 0, 0.5)
+    row.timerBar:Hide()
+
     -- separate right-side column so the tag never gets clipped with the name
     row.autoTag = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.autoTag:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -3)
@@ -585,13 +663,49 @@ local function BindTokens(row, e)
     end
 end
 
+-- countdown bar: fraction of the roll time still left, colored by urgency.
+-- Only shown while the item is still awaiting the player's decision.
+local function UpdateTimerBar(row)
+    local e = row.entry
+    if not e or not db.showTimerBar or not (e.active and not e.myRoll) then
+        row.timerBar:Hide()
+        return
+    end
+
+    local frac
+    if e.test then
+        frac = e.fakeFrac or 1
+    else
+        local left = GetLootRollTimeLeft and GetLootRollTimeLeft(e.rollID)
+        if not left or left <= 0 then row.timerBar:Hide(); return end
+        -- rollTime (from START_LOOT_ROLL) is the total; missing after a /reload
+        -- re-arm, so fall back to the largest remaining we've seen for this roll
+        local maxMs = e.rollTime
+        if not maxMs or maxMs <= 0 then
+            e.rollTimeMax = math.max(e.rollTimeMax or 0, left)
+            maxMs = e.rollTimeMax
+        end
+        frac = (maxMs and maxMs > 0) and math.min(1, left / maxMs) or 1
+    end
+
+    row.timerBar:SetValue(frac)
+    if frac > 0.5 then
+        row.timerBar:SetStatusBarColor(0.2, 0.8, 0.25)
+    elseif frac > 0.25 then
+        row.timerBar:SetStatusBarColor(0.95, 0.8, 0.2)
+    else
+        row.timerBar:SetStatusBarColor(0.9, 0.25, 0.2)
+    end
+    row.timerBar:Show()
+end
+
 local function BindRow(row, e)
     row.entry = e
     row.icon.tex:SetTexture(e.texture)
     row.icon.link = e.link
     row.name:SetText(QualityColoredName(e))
 
-    if db.showPawnUpgrade or e.test then
+    if PawnLoaded() or e.test then
         if not e.pawnDone then
             local _, txt, r, g, b, isUp = PawnUpgradeFor(e.link)
             local tries = e.pawnTries or 0
@@ -646,6 +760,8 @@ local function BindRow(row, e)
         row.glow:Hide()
         BindTokens(row, e)
     end
+
+    UpdateTimerBar(row)
 end
 
 local function CreateLogFrame()
@@ -770,6 +886,7 @@ local function CreateLogFrame()
                     dirty = true
                 else
                     row.timer:SetText(math.ceil(left / 1000) .. "s")
+                    UpdateTimerBar(row)
                 end
             end
         end
@@ -856,7 +973,7 @@ function UpdateLog()
     logFrame:SetHeight(titleH + pad + body + pad + footerH)
 end
 
-local function AddRoll(rollID, action)
+local function AddRoll(rollID, action, rollTime)
     local texture, name, _, quality, bop, canNeed, canGreed, canDE = GetLootRollItemInfo(rollID)
     local link = GetLootRollItemLink and GetLootRollItemLink(rollID)
     local e = {
@@ -864,6 +981,7 @@ local function AddRoll(rollID, action)
         quality = quality or 1, bop = bop,
         canNeed = canNeed, canGreed = canGreed, canDE = canDE,
         action = action, active = true, players = nil, auto = (action ~= "leave"),
+        rollTime = rollTime,
     }
     if action == "greed" then e.myRoll = 2
     elseif action == "need" then e.myRoll = 1
@@ -933,13 +1051,13 @@ local function BuildTestData()
         {   -- pending, needs a roll (pulses; Need/Greed/Pass/DE + Pawn %)
             rollID = -1, name = "Greatsword of Testing", texture = "Interface\\Icons\\INV_Sword_39",
             quality = 4, canNeed = true, canGreed = true, canDE = true,
-            action = "leave", active = true, test = true, fakeTimer = "58s",
+            action = "leave", active = true, test = true, fakeTimer = "50s", fakeFrac = 0.85,
             pawnDone = true, pawnText = "+18%", pawnR = 0, pawnG = 1, pawnB = 0, pawnArrow = true,
         },
         {   -- pending, not usable by class (no Need button)
             rollID = -2, name = "Cloth Hood of the Wrong Class", texture = "Interface\\Icons\\INV_Helmet_24",
             quality = 3, canNeed = false, canGreed = true, canDE = true,
-            action = "leave", active = true, test = true, fakeTimer = "58s", pawnDone = true,
+            action = "leave", active = true, test = true, fakeTimer = "15s", fakeFrac = 0.22, pawnDone = true,
         },
         {   -- auto-greeded (shows your token + "Auto")
             rollID = -3, name = "Leather Belt of Filler", texture = "Interface\\Icons\\INV_Belt_15",
@@ -1064,37 +1182,54 @@ local function BuildOptions()
     r2l:SetPoint("LEFT", r2, "RIGHT", 4, 0)
     r2l:SetText("Greed wrong armor type (smart)")
 
+    -- third mode only offered when Pawn is loaded: greed everything that isn't a
+    -- Pawn upgrade (actual upgrades are left for you to roll on)
+    local pawnLoaded = (PawnGetItemData and PawnIsItemAnUpgrade) and true or false
+    if not pawnLoaded and db.autoRollMode == "pawn" then db.autoRollMode = "armor" end
+
+    local r3
+    if pawnLoaded then
+        r3 = CreateFrame("CheckButton", nil, panel, "UIRadioButtonTemplate")
+        r3:SetPoint("TOPLEFT", 28, -240)
+        local r3l = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        r3l:SetPoint("LEFT", r3, "RIGHT", 4, 0)
+        r3l:SetText("Greed everything that isn't an upgrade (Pawn)")
+    end
+
     local function syncRadios()
         r1:SetChecked(db.autoRollMode == "cantuse")
-        r2:SetChecked(db.autoRollMode ~= "cantuse")
+        r2:SetChecked(db.autoRollMode == "armor")
+        if r3 then r3:SetChecked(db.autoRollMode == "pawn") end
     end
     r1:SetScript("OnClick", function() db.autoRollMode = "cantuse"; syncRadios() end)
     r2:SetScript("OnClick", function() db.autoRollMode = "armor"; syncRadios() end)
+    if r3 then r3:SetScript("OnClick", function() db.autoRollMode = "pawn"; syncRadios() end) end
     syncRadios()
 
-    AddCheck(panel, 24, -248, "Auto-greed gems, reagents & materials",
+    AddCheck(panel, 24, -272, "Auto-greed gems, reagents & materials",
         function() return db.autoGreedResources end,
         function(v) db.autoGreedResources = v end)
 
-    AddCheck(panel, 24, -276, "Auto-greed all green (uncommon) items",
+    AddCheck(panel, 24, -300, "Auto-greed all green (uncommon) items",
         function() return db.autoGreedGreens end,
         function(v) db.autoGreedGreens = v end)
 
-    AddCheck(panel, 24, -304, "Auto-greed slots where you wear an heirloom",
+    AddCheck(panel, 24, -328, "Auto-greed slots where you wear an heirloom",
         function() return db.autoGreedHeirloomSlot end,
         function(v) db.autoGreedHeirloomSlot = v end)
 
-    AddCheck(panel, 24, -332, "Show upgrade % vs equipped (requires Pawn)",
-        function() return db.showPawnUpgrade end,
-        function(v) db.showPawnUpgrade = v; UpdateLog() end)
+    -- Pawn-only option: hidden entirely when Pawn isn't loaded (it's a no-op then)
+    local timerY = -356
+    if pawnLoaded then
+        AddCheck(panel, 24, -356, "Never auto-greed a Pawn upgrade (offer the roll)",
+            function() return db.dontGreedUpgrades end,
+            function(v) db.dontGreedUpgrades = v end)
+        timerY = -384
+    end
 
-    AddCheck(panel, 24, -360, "Never auto-greed a Pawn upgrade (offer the roll)",
-        function() return db.dontGreedUpgrades end,
-        function(v) db.dontGreedUpgrades = v end)
-
-    AddCheck(panel, 24, -388, "Enchanters: disenchant instead of greed",
-        function() return db.enchanterDisenchant end,
-        function(v) db.enchanterDisenchant = v end)
+    AddCheck(panel, 24, timerY, "Show a countdown bar on pending rolls",
+        function() return db.showTimerBar end,
+        function(v) db.showTimerBar = v; UpdateLog() end)
 
     if Settings and Settings.RegisterCanvasLayoutCategory then
         settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "BetterDungeonLoot")
@@ -1217,14 +1352,18 @@ DecideAndApply = function(rollID, tries)
 
     if not db.autoRoll or not InScope() then AutoRoll_Leave(e) return end
 
-    local _, _, _, quality, _, canNeed, canGreed, canDE = GetLootRollItemInfo(rollID)
+    local _, _, _, quality, _, canNeed, canGreed = GetLootRollItemInfo(rollID)
     if not canGreed then AutoRoll_Leave(e) return end
 
-    local decision = DecideRoll(rollID, canNeed, canDE, quality)
+    local decision, final = DecideRoll(rollID, canNeed, quality)
     if decision == "leave" then AutoRoll_Leave(e) return end
 
-    -- don't auto-greed something Pawn flags as an upgrade; wait for Pawn to load first
-    if db.dontGreedUpgrades and (decision == "greed" or decision == "disenchant") then
+    -- Hold back items Pawn flags as an upgrade (waiting for Pawn to load first).
+    -- Always applies in the "greed non-upgrades (Pawn)" mode, and when the
+    -- "never auto-greed a Pawn upgrade" option is on for the other modes.
+    -- A "final" greed (the heirloom-slot rule) skips this: keeping the heirloom
+    -- deliberately overrides Pawn, which may rate the drop as an upgrade.
+    if not final and (db.autoRollMode == "pawn" or db.dontGreedUpgrades) and decision == "greed" then
         local ready, isUp = PawnUpgradeCheck(e.link)
         if isUp then AutoRoll_Leave(e) return end
         if not ready and (tries or 0) < 5 and C_Timer and C_Timer.After then
@@ -1280,7 +1419,7 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         Print("loaded. /bdl for commands.")
 
     elseif event == "START_LOOT_ROLL" then
-        AddRoll(arg1, "leave")     -- add as pending; the dispatcher decides the auto-roll
+        AddRoll(arg1, "leave", arg2)  -- arg2 = total roll time (ms); dispatcher decides the auto-roll
         DecideAndApply(arg1, 0)
 
     elseif event == "CANCEL_LOOT_ROLL" then
@@ -1316,6 +1455,28 @@ end)
 -- Slash commands
 --------------------------------------------------------------------------------
 
+-- Diagnostic: dump the parsed scaling cap (and working state) for equipped heirlooms.
+local function DumpHeirlooms()
+    local plvl = UnitLevel("player") or 0
+    Print(("heirloom dump — player level %d:"):format(plvl))
+    local found = false
+    for slot = 1, 18 do
+        local q = GetInventoryItemQuality("player", slot)
+        local link = GetInventoryItemLink("player", slot)
+        if link and q == nil then q = select(3, GetItemInfo(link)) end
+        if link and q == HEIRLOOM_QUALITY then
+            found = true
+            local name = GetItemInfo(link)
+            local cap = HeirloomCap(link)
+            local working = (not cap) or plvl <= cap
+            Print(("  slot %d: %s — cap %s, %s"):format(
+                slot, tostring(name), cap and tostring(cap) or "?",
+                working and "still scaling (greed slot)" or "capped (treated as no heirloom)"))
+        end
+    end
+    if not found then Print("  no equipped heirlooms found.") end
+end
+
 local function ShowStatus()
     Print("status:")
     Print(("  enabled: %s | scope: %s"):format(tostring(db.enabled), db.scope))
@@ -1339,9 +1500,12 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         Print("  /bdl fitting  - fitting items: leave <-> auto-need")
         Print("  /bdl needers  - toggle showing who rolled Need (F4)")
         Print("  /bdl hideblizz- toggle hiding Blizzard roll frames")
+        Print("  /bdl heirloom - dump equipped heirloom data (cap detection debug)")
         Print("  /bdl on|off   - enable/disable the addon")
     elseif msg == "status" then
         ShowStatus()
+    elseif msg == "heirloom" then
+        DumpHeirlooms()
     elseif msg == "log" then
         ToggleLog()
     elseif msg == "test" then
