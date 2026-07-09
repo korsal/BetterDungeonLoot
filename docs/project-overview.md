@@ -134,8 +134,9 @@ missing Pawn is a no-op. `## OptionalDeps: Pawn` ensures load order.
 - **Settings panel** (Settings canvas, `/bdl config`):
   - rows shown (1–5), history size (10–100);
   - auto-greed mode radios ("can't equip/use" vs "wrong armor type");
-  - "auto-greed gems, reagents & materials" checkbox;
-  - "enchanters: disenchant instead of greed" checkbox.
+  - checkboxes: auto-greed materials, all greens, heirloom-slot drops;
+  - show Pawn upgrade %; never auto-greed a Pawn upgrade;
+  - enchanters: disenchant instead of greed.
 
 Panel construction is wrapped in `pcall` so a template mismatch can't break load.
 
@@ -148,16 +149,18 @@ Single file, `BetterDungeonLoot.lua`, organised into sections:
 1. **SavedVariables / defaults** — `defaults` table + recursive `ApplyDefaults`.
 2. **Scope** — `InScope()` via `IsInInstance()`.
 3. **F1** — bind-confirm handlers.
-4. **F3** — armour tables, `DecideRoll`, `DecideAndRoll` (performs the roll).
+4. **F3** — armour tables, resource/heirloom checks, `DecideRoll` (pure decision).
 5. **F4 helpers** — `HistoryPlayersForRoll`, name/UTF-8 helpers.
-6. **F5** — the log window: row pool, tokens, buttons, pulse glow, scroll.
-7. **F6** — options panel + minimap button.
-8. **Event dispatch** — one frame routing all events.
-9. **Slash commands** — `/bdl`.
+6. **F7 helpers** — `PawnUpgradeFor` / `PawnUpgradeCheck` (Pawn integration).
+7. **F5** — the log window: row pool, tokens, buttons, pulse glow, upgrade badge, scroll.
+8. **F6** — options panel + minimap button; test mode (`/bdl test`).
+9. **Auto-roll dispatch** — `DecideAndApply` (defers greed for the Pawn upgrade check).
+10. **Event dispatch** — one frame routing all events.
+11. **Slash commands** — `/bdl`.
 
 ### Data model
-`log` is an array of entries (newest first), bound to `BetterDungeonLootDB.log`
-so it persists. Each entry:
+`log` is an array of entries (newest first), bound to
+`BetterDungeonLootCharDB.log` (per-character) so it persists. Each entry:
 
 ```
 { rollID, link, name, texture, quality, bop,
@@ -166,7 +169,9 @@ so it persists. Each entry:
   myRoll,        -- 1/2/3 if you (or auto) rolled
   auto,          -- true if the addon rolled it automatically
   active,        -- roll still in progress
-  players }      -- list of { name, class, rollType, isWinner, isMe }
+  players,       -- list of { name, class, rollType, isWinner, isMe }
+  pawnText, pawnArrow, pawnDone,  -- cached Pawn upgrade result
+  test }         -- true for /bdl test sample rows
 ```
 
 Display order and the visible viewport are computed each `UpdateLog()`:
@@ -192,6 +197,7 @@ account DB to a per-character DB).
 - `/bdl status` — current settings
 - `/bdl config` — open the settings panel
 - `/bdl log` — show/hide the window
+- `/bdl test` — fill the window with sample rows (preview the layout)
 - `/bdl autoroll` — toggle auto-greed
 - `/bdl fitting` — leave ↔ auto-need for usable items
 - `/bdl needers` — toggle the Need tokens
@@ -214,6 +220,7 @@ account DB to a per-character DB).
 
 ## Known limitations
 - Live Need detection depends on `C_LootHistory` updating during the roll.
-- Weapon usability isn't modelled in "armor" mode (weapons are left for you to
-  decide); the "cantuse" mode covers weapons via `canNeed`.
-- No "is this an upgrade?" logic (that would need item-value data).
+- Class/spec weapon proficiency isn't modelled; "armor" mode greeds only weapons
+  the client marks unusable (`canNeed == false`), the rest are left for you.
+- Upgrade detection needs Pawn; without it there is no "is this an upgrade?" data,
+  so the "never auto-greed an upgrade" rule is a no-op.
