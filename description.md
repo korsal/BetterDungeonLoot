@@ -10,7 +10,7 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 
 *   _Anything I can't equip/use_ — greeds everything your character can't roll Need on.
 *   _Wrong armor type (smart)_ — greeds body armor that isn't your class's armor type for your level (e.g. cloth/leather for a plate class), and leaves the rest to you.
-*   _Greed everything that isn't an upgrade_ — with [Pawn](https://www.curseforge.com/wow/addons/pawn) installed, greeds every drop Pawn doesn't consider an upgrade for your spec, and leaves real upgrades for you to roll on.
+*   _Greed everything that isn't an upgrade_ — with [Pawn](https://www.curseforge.com/wow/addons/pawn) installed, greeds drops Pawn doesn't consider upgrades and leaves upgrades for you to roll on.
 
 **Auto-confirm binding.** The "this item will become soulbound" confirmation is accepted for you, so blue+ drops don't interrupt you mid-fight.
 
@@ -22,7 +22,7 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 *   **Ctrl+Right-click** an item to try it on in the Dressing Room.
 *   Scrollable **per-character** history (up to 100 rolls) that survives `/reload`.
 
-**Works with Pawn.** If [Pawn](https://www.curseforge.com/wow/addons/pawn) is installed, a green upgrade arrow appears on the icon and the upgrade percentage versus your currently equipped item — for your active spec's scale — is shown right under it, so you can tell an upgrade from a side-grade at a glance. Better Dungeon Loot will also **never auto-greed an item Pawn calls an upgrade** — it offers you the roll instead.
+**Works with Pawn.** If [Pawn](https://www.curseforge.com/wow/addons/pawn) is installed, a green upgrade arrow appears on the icon and Pawn's upgrade percentage is shown right under it, so you can tell an upgrade from a side-grade at a glance. The **Never auto-greed a Pawn upgrade** option is on by default: upgrades are offered for a manual roll. The heirloom-slot auto-greed rule takes priority when enabled.
 
 **Handy extras.**
 
@@ -41,4 +41,4 @@ By default it only acts in dungeons and raids, so the open world is untouched.
 *   Right-click it, or type `/bdl config`, to open settings.
 *   `/bdl` lists all commands.
 
-Built for **Mists of Pandaria Classic (5.5.4)**.
+Built for **Mists of Pandaria Classic (5.5.4)** and **Burning Crusade Classic Anniversary (2.5.6)**.
