@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0] - 2026-10-24
+### Added
+- Support for Burning Crusade Classic Anniversary (2.5.6) alongside Mists of
+  Pandaria Classic (5.5.4) in the same addon package.
+
+### Packaging
+- Keep the Git checkout outside `AddOns` and use the local install script to
+  restore the Anniversary copy after CurseForge updates it.
+
 ## [1.3.0] - 2026-07-09
 ### Added
 - Countdown bar on rolls that still need your decision: a coloured bar under each

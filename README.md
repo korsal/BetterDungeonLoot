@@ -37,5 +37,11 @@ only the `.toc` and `.lua` files, and removes other files from that game copy.
 The same `.toc` supports MoP Classic (interface 50504) and Burning Crusade
 Classic Anniversary (interface 20506). Pawn is optional.
 
+## Package for CurseForge
+Run `./package.sh` from a clean committed checkout. It creates a ZIP containing
+only `BetterDungeonLoot/BetterDungeonLoot.toc` and
+`BetterDungeonLoot/BetterDungeonLoot.lua`. On the CurseForge file page, tag the
+upload for both Mists of Pandaria Classic and Burning Crusade Classic Anniversary.
+
 ## License
 Personal project; do as you like.

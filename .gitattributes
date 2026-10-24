@@ -10,3 +10,5 @@ README.md       export-ignore
 CHANGELOG.md    export-ignore
 description.md  export-ignore
 logo.png        export-ignore
+install-anniversary.sh export-ignore
+package.sh      export-ignore
