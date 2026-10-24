@@ -1,8 +1,8 @@
 # Better Dungeon Loot
 
 Stop clicking every drop. **Better Dungeon Loot** automates the tedious parts of
-group loot in Mists of Pandaria Classic (5.5.4) dungeons and gives you a clean,
-compact loot-roll log.
+group loot in Mists of Pandaria Classic (5.5.4) and Burning Crusade Classic
+Anniversary (2.5.6) dungeons and gives you a clean, compact loot-roll log.
 
 ## Features
 - **Auto-greed** drops your character can't use — choose between "anything I can't
@@ -28,8 +28,14 @@ By default it only acts inside dungeons and raids.
 - `/bdl log` — show/hide the window
 
 ## Install
-Extract into `World of Warcraft\_classic_\Interface\AddOns\` so you have
-`Interface\AddOns\BetterDungeonLoot\`. Requires MoP Classic (interface 50504).
+Keep this Git checkout at `World of Warcraft/BetterDungeonLoot`, outside the
+game's `AddOns` directories. Run `./install-anniversary.sh` from this checkout
+to install the game files into `_anniversary_/Interface/AddOns/BetterDungeonLoot`.
+Run it again if CurseForge replaces the installed copy. The installer copies
+only the `.toc` and `.lua` files, and removes other files from that game copy.
+
+The same `.toc` supports MoP Classic (interface 50504) and Burning Crusade
+Classic Anniversary (interface 20506). Pawn is optional.
 
 ## License
 Personal project; do as you like.

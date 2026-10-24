@@ -1,4 +1,4 @@
-## Interface: 50504
+## Interface: 50504, 20506
 ## Title: Better Dungeon Loot
 ## Notes: Auto-rolls, auto-confirms binding, and shows a clean loot-roll log so you stop clicking every drop.
 ## Author: Igor
