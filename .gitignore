@@ -1,4 +1,5 @@
 *.zip
+BetterDungeonLoot-[0-9]*/
 *.bak
 .DS_Store
 Thumbs.db
