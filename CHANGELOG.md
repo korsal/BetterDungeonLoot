@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+### Added
+- WoW Forever (1.60.1) compatibility: its loot-history API and Transmog roll
+  button are handled separately while the same addon files support the existing
+  Classic clients.
+- Repeatable installation into the Forever client with `install-forever.sh`.
+
 ## [1.4.0] - 2026-10-24
 ### Added
 - Support for Burning Crusade Classic Anniversary (2.5.6) alongside Mists of

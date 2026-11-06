@@ -5,6 +5,8 @@
 --    shows who rolled Need (F4), and hides Blizzard's roll frames (F2 obsolete).
 
 local ADDON_NAME = ...
+local interfaceVersion = tonumber(select(4, GetBuildInfo())) or 0
+local IS_FOREVER = interfaceVersion >= 16000 and interfaceVersion < 17000
 
 local PREFIX = "|cff33ff99BetterDungeonLoot|r: "
 local function Print(msg)
@@ -64,6 +66,7 @@ local function ApplyDefaults(db, def)
 end
 
 local db  -- BetterDungeonLootDB after login
+local log = {}  -- shared with the loot-history adapter below
 
 --------------------------------------------------------------------------------
 -- Scope check
@@ -269,9 +272,8 @@ end
 
 
 --------------------------------------------------------------------------------
--- F4 helpers: read each player's roll from C_LootHistory
--- GetPlayerInfo -> name, class, rollType, roll, isWinner, isMe
--- rollType: 0 pass, 1 need, 2 greed, 3 disenchant
+-- F4 helpers: read each player's roll from C_LootHistory. Classic uses
+-- GetItem/GetPlayerInfo; Forever uses encounter drops and different roll states.
 --------------------------------------------------------------------------------
 
 local function ShortName(name)
@@ -292,13 +294,80 @@ local function Utf8Sub(s, n)
     return s:sub(1, i - 1)
 end
 
+local function ItemSignature(link)
+    if type(link) ~= "string" then return nil end
+    return link:match("|H(item:[^|]+)|h") or link:match("(item:[^|]+)")
+end
+
+-- Forever does not expose a rollID -> history-drop mapping. Match by the full
+-- item payload and the roll start time, without assigning one drop twice.
+local function ForeverHistoryDropForRoll(e)
+    if not e.link or not C_LootHistory.GetAllEncounterInfos then return nil end
+    if e.historyEncounterID and e.historyLootListKey then
+        local drop = C_LootHistory.GetSortedInfoForDrop(e.historyEncounterID, e.historyLootListKey)
+        if drop then return drop end
+    end
+    if not e.historyTime or C_LootHistory.GetLootHistoryTime() - e.historyTime > 120 then return nil end
+
+    local signature = ItemSignature(e.link)
+    if not signature then return nil end
+    local best, bestEncounter, bestDelta
+    for _, encounter in ipairs(C_LootHistory.GetAllEncounterInfos() or {}) do
+        for _, drop in ipairs(C_LootHistory.GetSortedDropsForEncounter(encounter.encounterID) or {}) do
+            if ItemSignature(drop.itemHyperlink) == signature and type(drop.startTime) == "number" then
+                local claimed = false
+                for _, other in ipairs(log) do
+                    if other ~= e and other.historyEncounterID == encounter.encounterID
+                        and other.historyLootListKey == drop.lootListKey then
+                        claimed = true
+                        break
+                    end
+                end
+                local delta = math.abs(drop.startTime - e.historyTime)
+                if not claimed and delta <= 120 and (not bestDelta or delta < bestDelta) then
+                    best, bestEncounter, bestDelta = drop, encounter.encounterID, delta
+                end
+            end
+        end
+    end
+    if best then
+        e.historyEncounterID = bestEncounter
+        e.historyLootListKey = best.lootListKey
+    end
+    return best
+end
+
+local function ForeverRollType(state)
+    if state == 0 or state == 1 then return 1 end  -- main/off-spec Need
+    if state == 2 then return 4 end                -- Transmog
+    if state == 3 then return 2 end                -- Greed
+    if state == 5 then return 0 end                -- Pass
+    return nil                                     -- NoRoll
+end
+
 -- list of {name(short), class, rollType, isWinner} for players who have chosen
-local function HistoryPlayersForRoll(rollID)
+local function HistoryPlayersForRoll(e)
     if not C_LootHistory then return nil end
+    if IS_FOREVER then
+        local drop = ForeverHistoryDropForRoll(e)
+        if not drop then return nil end
+        local players = {}
+        for _, roll in ipairs(drop.rollInfos or {}) do
+            local rollType = ForeverRollType(roll.state)
+            if rollType ~= nil then
+                players[#players + 1] = {
+                    name = ShortName(roll.playerName), class = roll.playerClass,
+                    rollType = rollType, isWinner = roll.isWinner, isMe = roll.isSelf,
+                }
+            end
+        end
+        return players, (drop.winner or drop.allPassed) and true or false
+    end
+
     local n = C_LootHistory.GetNumItems and C_LootHistory.GetNumItems() or 0
     for idx = 1, n do
         local id = C_LootHistory.GetItem(idx)
-        if id == rollID and C_LootHistory.GetPlayerInfo then
+        if id == e.rollID and C_LootHistory.GetPlayerInfo then
             local players
             for p = 1, 40 do
                 local name, class, rollType, _, isWinner, isMe = C_LootHistory.GetPlayerInfo(idx, p)
@@ -323,7 +392,7 @@ end
 
 local logFrame
 local rows = {}
-local log = {}           -- log[1] = newest
+-- log[1] = newest
 local scrollOffset = 0   -- how many newest entries are scrolled past
 local autoOpened = false -- window was popped open by a roll (auto-close when done)
 local UpdateLog          -- forward declaration
@@ -332,7 +401,7 @@ local function IsLogShown()
     return logFrame and logFrame:IsShown()
 end
 
-local ROLL_TYPE_NAME = { [0] = "Pass", [1] = "Need", [2] = "Greed", [3] = "DE" }
+local ROLL_TYPE_NAME = { [0] = "Pass", [1] = "Need", [2] = "Greed", [3] = "DE", [4] = "Transmog" }
 
 local function QualityColoredName(e)
     local q = ITEM_QUALITY_COLORS[e.quality or 1]
@@ -361,13 +430,19 @@ local ROLL_TYPE_ICON = {
     [2] = "Interface\\Buttons\\UI-GroupLoot-Coin-Up",
     [3] = "Interface\\Buttons\\UI-GroupLoot-DE-Up",
 }
+local FOREVER_ROLL_ATLAS = {
+    [0] = "lootroll-toast-icon-pass-up",
+    [1] = "lootroll-toast-icon-need-up",
+    [2] = "lootroll-toast-icon-greed-up",
+    [4] = "lootroll-toast-icon-transmog-up",
+}
 local CROWN_TEX = "Interface\\GroupFrame\\UI-Group-LeaderIcon"
 local CIRCLE_MASK = "Interface\\Masks\\CircleMaskScalable"
 
 -- the Blizzard roll icons sit high inside their texture; nudge them down so they
 -- look centered (buttons at 22px, circle tokens at 16px need a smaller nudge)
-local ROLL_ICON_OFFSET = { [0] = 0, [1] = -1, [2] = -3, [3] = 0 }
-local ROLL_ICON_OFFSET_TOKEN = { [0] = 0, [1] = -1, [2] = -3, [3] = 0 }
+local ROLL_ICON_OFFSET = { [0] = 0, [1] = -1, [2] = -3, [3] = 0, [4] = 0 }
+local ROLL_ICON_OFFSET_TOKEN = { [0] = 0, [1] = -1, [2] = -3, [3] = 0, [4] = 0 }
 
 local function MakeRollIconButton(row, rtype)
     local b = CreateFrame("Button", nil, row, "BackdropTemplate")
@@ -381,11 +456,14 @@ local function MakeRollIconButton(row, rtype)
     b:SetBackdropColor(0.12, 0.12, 0.14, 0.9)
     b:SetBackdropBorderColor(0.55, 0.55, 0.6, 0.9)
 
-    local base = ROLL_BTN_BASE[rtype]
     b.icon = b:CreateTexture(nil, "ARTWORK")
     b.icon:SetSize(22, 22)
     b.icon:SetPoint("CENTER", b, "CENTER", 0, ROLL_ICON_OFFSET[rtype] or 0)
-    b.icon:SetTexture(base .. "-Up")
+    if IS_FOREVER then
+        b.icon:SetAtlas(FOREVER_ROLL_ATLAS[rtype])
+    else
+        b.icon:SetTexture(ROLL_BTN_BASE[rtype] .. "-Up")
+    end
 
     -- neutral additive glow on hover (the roll "-Highlight" art includes the icon
     -- itself, which drew a duplicated texture on top)
@@ -618,11 +696,11 @@ local function CreateRow(parent, index)
     row.needBtn  = MakeRollIconButton(row, 1)
     row.greedBtn = MakeRollIconButton(row, 2)
     row.passBtn  = MakeRollIconButton(row, 0)
-    row.deBtn    = MakeRollIconButton(row, 3)
+    row.extraBtn = MakeRollIconButton(row, IS_FOREVER and 4 or 3)
     row.needBtn:SetPoint("TOPLEFT", row, "TOPLEFT", 44, -20)
     row.greedBtn:SetPoint("LEFT", row.needBtn, "RIGHT", 6, 0)
     row.passBtn:SetPoint("LEFT", row.greedBtn, "RIGHT", 6, 0)
-    row.deBtn:SetPoint("LEFT", row.passBtn, "RIGHT", 6, 0)
+    row.extraBtn:SetPoint("LEFT", row.passBtn, "RIGHT", 6, 0)
 
     -- class-circle tokens (row shown once rolled / finished); cap at 5 (raids)
     row.tokens = {}
@@ -649,7 +727,11 @@ local function BindTokens(row, e)
             local r, g, b = 0.6, 0.6, 0.6
             if col then r, g, b = col.r, col.g, col.b end
             tok.disc:SetVertexColor(r, g, b)
-            tok.rollIcon:SetTexture(ROLL_TYPE_ICON[p.rollType])
+            if IS_FOREVER then
+                tok.rollIcon:SetAtlas(FOREVER_ROLL_ATLAS[p.rollType])
+            else
+                tok.rollIcon:SetTexture(ROLL_TYPE_ICON[p.rollType])
+            end
             tok.rollIcon:ClearAllPoints()
             tok.rollIcon:SetPoint("CENTER", tok.disc, "CENTER", 0, ROLL_ICON_OFFSET_TOKEN[p.rollType] or 0)
             tok.crown:SetShown(p.isWinner and true or false)
@@ -749,7 +831,7 @@ local function BindRow(row, e)
     row.needBtn:SetShown(needRoll and (e.canNeed and true or false))
     row.greedBtn:SetShown(needRoll and (e.canGreed and true or false))
     row.passBtn:SetShown(needRoll)
-    row.deBtn:SetShown(needRoll and (e.canDE and true or false))
+    row.extraBtn:SetShown(needRoll and ((IS_FOREVER and e.canTransmog or e.canDE) and true or false))
 
     if needRoll then
         row.glow:Show()
@@ -974,15 +1056,18 @@ function UpdateLog()
 end
 
 local function AddRoll(rollID, action, rollTime)
-    local texture, name, _, quality, bop, canNeed, canGreed, canDE = GetLootRollItemInfo(rollID)
+    local texture, name, _, quality, bop, canNeed, canGreed, canDE, _, _, _, _, canTransmog = GetLootRollItemInfo(rollID)
     local link = GetLootRollItemLink and GetLootRollItemLink(rollID)
     local e = {
         rollID = rollID, link = link, name = name, texture = texture,
         quality = quality or 1, bop = bop,
-        canNeed = canNeed, canGreed = canGreed, canDE = canDE,
+        canNeed = canNeed, canGreed = canGreed, canDE = canDE, canTransmog = canTransmog,
         action = action, active = true, players = nil, auto = (action ~= "leave"),
         rollTime = rollTime,
     }
+    if IS_FOREVER and C_LootHistory and C_LootHistory.GetLootHistoryTime then
+        e.historyTime = C_LootHistory.GetLootHistoryTime()
+    end
     if action == "greed" then e.myRoll = 2
     elseif action == "need" then e.myRoll = 1
     elseif action == "de" then e.myRoll = 3 end
@@ -998,9 +1083,20 @@ end
 local function RefreshPlayers()
     if not (db.showNeeders and C_LootHistory) then return end
     local found = false
+    local historyNow = IS_FOREVER and C_LootHistory.GetLootHistoryTime()
     for _, e in ipairs(log) do
-        local players = HistoryPlayersForRoll(e.rollID)
-        if players then e.players = players; found = true end
+        if not IS_FOREVER or e.historyEncounterID
+            or (e.historyTime and historyNow - e.historyTime <= 120) then
+            local players, done = HistoryPlayersForRoll(e)
+            if players then
+                e.players = players
+                if done then e.active = false end
+                for _, p in ipairs(players) do
+                    if p.isMe and e.myRoll == nil then e.myRoll = p.rollType end
+                end
+                found = true
+            end
+        end
     end
     if found then UpdateLog() end
 end
@@ -1019,7 +1115,10 @@ local function ReactivateLiveRolls()
             end
         end
     end
-    if changed then UpdateLog() end
+    if changed then
+        RefreshPlayers()
+        UpdateLog()
+    end
 end
 
 local function ShowLog()
@@ -1048,9 +1147,9 @@ local testMode, realLog = false, nil
 local function BuildTestData()
     local _, myClass = UnitClass("player")
     return {
-        {   -- pending, needs a roll (pulses; Need/Greed/Pass/DE + Pawn %)
+        {   -- pending, needs a roll (pulses; Need/Greed/Pass/extra + Pawn %)
             rollID = -1, name = "Greatsword of Testing", texture = "Interface\\Icons\\INV_Sword_39",
-            quality = 4, canNeed = true, canGreed = true, canDE = true,
+            quality = 4, canNeed = true, canGreed = true, canDE = true, canTransmog = true,
             action = "leave", active = true, test = true, fakeTimer = "50s", fakeFrac = 0.85,
             pawnDone = true, pawnText = "+18%", pawnR = 0, pawnG = 1, pawnB = 0, pawnArrow = true,
         },
@@ -1304,7 +1403,38 @@ end
 -- log window instead, so the default center frames are never needed.
 --------------------------------------------------------------------------------
 
+local foreverMouseState = setmetatable({}, { __mode = "k" })
+local function SetForeverMouseTree(frame, hide)
+    if foreverMouseState[frame] == nil then
+        foreverMouseState[frame] = frame:IsMouseEnabled() and 1 or 0
+    end
+    frame:EnableMouse(not hide and foreverMouseState[frame] == 1)
+    for _, child in ipairs({ frame:GetChildren() }) do
+        SetForeverMouseTree(child, hide)
+    end
+end
+
+local function UpdateForeverBlizzardVisibility()
+    if not IS_FOREVER or not GroupLootContainer then return end
+    local hide = db.enabled and db.hideBlizzardRoll
+    -- Keep Blizzard's roll frames shown internally so their event handlers still
+    -- retire each roll. Hiding the frames makes Blizzard reuse live roll slots.
+    GroupLootContainer:SetAlpha(hide and 0 or 1)
+    SetForeverMouseTree(GroupLootContainer, hide)
+end
+
 local function SetupHideBlizzard()
+    if IS_FOREVER then
+        if GroupLootContainer then
+            hooksecurefunc(GroupLootContainer, "Show", UpdateForeverBlizzardVisibility)
+        end
+        for i = 1, NUM_GROUP_LOOT_FRAMES or 4 do
+            local f = _G["GroupLootFrame" .. i]
+            if f then hooksecurefunc(f, "Show", UpdateForeverBlizzardVisibility) end
+        end
+        UpdateForeverBlizzardVisibility()
+        return
+    end
     local function hideIf(f)
         if db.enabled and db.hideBlizzardRoll then
             f:Hide()
@@ -1386,9 +1516,15 @@ frame:RegisterEvent("START_LOOT_ROLL")
 frame:RegisterEvent("CANCEL_LOOT_ROLL")
 frame:RegisterEvent("CONFIRM_LOOT_ROLL")
 frame:RegisterEvent("LOOT_BIND_CONFIRM")
-frame:RegisterEvent("LOOT_HISTORY_FULL_UPDATE")
-frame:RegisterEvent("LOOT_HISTORY_ROLL_CHANGED")
-frame:RegisterEvent("LOOT_HISTORY_ROLL_COMPLETE")
+if IS_FOREVER then
+    frame:RegisterEvent("CANCEL_ALL_LOOT_ROLLS")
+    frame:RegisterEvent("LOOT_HISTORY_UPDATE_DROP")
+    frame:RegisterEvent("LOOT_HISTORY_UPDATE_ENCOUNTER")
+else
+    frame:RegisterEvent("LOOT_HISTORY_FULL_UPDATE")
+    frame:RegisterEvent("LOOT_HISTORY_ROLL_CHANGED")
+    frame:RegisterEvent("LOOT_HISTORY_ROLL_COMPLETE")
+end
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 
@@ -1421,11 +1557,16 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     elseif event == "START_LOOT_ROLL" then
         AddRoll(arg1, "leave", arg2)  -- arg2 = total roll time (ms); dispatcher decides the auto-roll
         DecideAndApply(arg1, 0)
+        if IS_FOREVER then RefreshPlayers() end
 
     elseif event == "CANCEL_LOOT_ROLL" then
         for _, e in ipairs(log) do
             if e.rollID == arg1 then e.active = false end
         end
+        UpdateLog()
+
+    elseif event == "CANCEL_ALL_LOOT_ROLLS" then
+        for _, e in ipairs(log) do e.active = false end
         UpdateLog()
 
     elseif event == "CONFIRM_LOOT_ROLL" then
@@ -1436,7 +1577,9 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
 
     elseif event == "LOOT_HISTORY_FULL_UPDATE"
         or event == "LOOT_HISTORY_ROLL_CHANGED"
-        or event == "LOOT_HISTORY_ROLL_COMPLETE" then
+        or event == "LOOT_HISTORY_ROLL_COMPLETE"
+        or event == "LOOT_HISTORY_UPDATE_DROP"
+        or event == "LOOT_HISTORY_UPDATE_ENCOUNTER" then
         RefreshPlayers()
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
@@ -1525,12 +1668,15 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         UpdateLog()
     elseif msg == "hideblizz" then
         db.hideBlizzardRoll = not db.hideBlizzardRoll
+        UpdateForeverBlizzardVisibility()
         Print("hideBlizzardRoll: " .. tostring(db.hideBlizzardRoll))
     elseif msg == "on" then
         db.enabled = true
+        UpdateForeverBlizzardVisibility()
         Print("enabled.")
     elseif msg == "off" then
         db.enabled = false
+        UpdateForeverBlizzardVisibility()
         Print("disabled.")
     else
         Print("unknown command: " .. msg .. " (try /bdl help)")

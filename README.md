@@ -29,16 +29,18 @@ By default it only acts inside dungeons and raids.
 
 ## Install
 Keep this Git checkout at `World of Warcraft/BetterDungeonLoot`, outside the
-game's `AddOns` directories. Run `./install-anniversary.sh` from this checkout
-to install the game files into `_anniversary_/Interface/AddOns/BetterDungeonLoot`.
-Run it again if CurseForge replaces the installed copy. The installer copies
-only the `.toc` and `.lua` files, and removes other files from that game copy.
+game's `AddOns` directories. Run `./install-anniversary.sh` or
+`./install-forever.sh` from this checkout to install the game files into the
+corresponding client's `Interface/AddOns/BetterDungeonLoot` directory. Run the
+installer again if CurseForge replaces the installed copy. It copies only the
+`.toc` and `.lua` files, and removes other files from that game copy.
 
-The same `.toc` supports MoP Classic (interface 50504) and Burning Crusade
-Classic Anniversary (interface 20506). Pawn is optional.
+The same `.toc` supports MoP Classic (interface 50504), Burning Crusade Classic
+Anniversary (interface 20506), and WoW Forever (interface 16001). Pawn is optional.
 
 ## Package for CurseForge
-Run `./package.sh` from a clean committed checkout. It creates a ZIP containing
+Run `./package.sh` from a clean release commit tagged with the `.toc` version.
+It creates a ZIP containing
 only `BetterDungeonLoot/BetterDungeonLoot.toc` and
 `BetterDungeonLoot/BetterDungeonLoot.lua`. On the CurseForge file page, tag the
 upload for both Mists of Pandaria Classic and Burning Crusade Classic Anniversary.

@@ -15,6 +15,12 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
+tag_commit="$(git rev-parse -q --verify "refs/tags/v$version^{}" || true)"
+if [[ "$tag_commit" != "$(git rev-parse HEAD)" ]]; then
+    printf 'Package only a release commit tagged v%s.\n' "$version" >&2
+    exit 1
+fi
+
 archive="BetterDungeonLoot-$version.zip"
 git archive --format=zip --prefix=BetterDungeonLoot/ --output="$archive" HEAD
 printf 'Created %s/%s\n' "$repo_dir" "$archive"
