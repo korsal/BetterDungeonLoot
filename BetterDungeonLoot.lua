@@ -1415,22 +1415,25 @@ local function SetForeverMouseTree(frame, hide)
 end
 
 local function UpdateForeverBlizzardVisibility()
-    if not IS_FOREVER or not GroupLootContainer then return end
+    if not IS_FOREVER then return end
     local hide = db.enabled and db.hideBlizzardRoll
     -- Keep Blizzard's roll frames shown internally so their event handlers still
     -- retire each roll. Hiding the frames makes Blizzard reuse live roll slots.
-    GroupLootContainer:SetAlpha(hide and 0 or 1)
-    SetForeverMouseTree(GroupLootContainer, hide)
+    -- In Forever the roll frames are parented to UIParent, not GroupLootContainer.
+    for i = 1, NUM_GROUP_LOOT_FRAMES or 4 do
+        local rollFrame = _G["GroupLootFrame" .. i]
+        if rollFrame then
+            rollFrame:SetAlpha(hide and 0 or 1)
+            SetForeverMouseTree(rollFrame, hide)
+        end
+    end
 end
 
 local function SetupHideBlizzard()
     if IS_FOREVER then
-        if GroupLootContainer then
-            hooksecurefunc(GroupLootContainer, "Show", UpdateForeverBlizzardVisibility)
-        end
         for i = 1, NUM_GROUP_LOOT_FRAMES or 4 do
             local f = _G["GroupLootFrame" .. i]
-            if f then hooksecurefunc(f, "Show", UpdateForeverBlizzardVisibility) end
+            if f then f:HookScript("OnShow", UpdateForeverBlizzardVisibility) end
         end
         UpdateForeverBlizzardVisibility()
         return
