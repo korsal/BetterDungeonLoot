@@ -5,7 +5,7 @@
 --    shows who rolled Need (F4), and hides Blizzard's roll frames (F2 obsolete).
 
 local ADDON_NAME = ...
-local interfaceVersion = tonumber(select(4, GetBuildInfo())) or 0
+local interfaceVersion = tonumber((select(4, GetBuildInfo()))) or 0
 local IS_FOREVER = interfaceVersion >= 16000 and interfaceVersion < 17000
 
 local PREFIX = "|cff33ff99BetterDungeonLoot|r: "
