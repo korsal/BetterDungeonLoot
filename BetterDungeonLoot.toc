@@ -2,7 +2,7 @@
 ## Title: Better Dungeon Loot
 ## Notes: Auto-rolls, auto-confirms binding, and shows a clean loot-roll log so you stop clicking every drop.
 ## Author: Igor
-## Version: 1.5.0-dev
+## Version: 1.5.0
 ## IconTexture: Interface\Icons\INV_Misc_Dice_02
 ## SavedVariables: BetterDungeonLootDB
 ## SavedVariablesPerCharacter: BetterDungeonLootCharDB

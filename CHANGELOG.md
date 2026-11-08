@@ -1,11 +1,17 @@
 # Changelog
 
-## Unreleased
+## [1.5.0] - 2026-11-08
 ### Added
 - WoW Forever (1.60.1) compatibility: its loot-history API and Transmog roll
   button are handled separately while the same addon files support the existing
   Classic clients.
 - Repeatable installation into the Forever client with `install-forever.sh`.
+
+### Fixed
+- The addon now loads correctly in Forever when `GetBuildInfo()` returns multiple
+  values.
+- Blizzard's default group-loot frames are hidden in Forever while their roll
+  lifecycle remains active.
 
 ## [1.4.0] - 2026-10-24
 ### Added

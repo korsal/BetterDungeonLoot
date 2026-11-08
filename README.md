@@ -1,8 +1,9 @@
 # Better Dungeon Loot
 
 Stop clicking every drop. **Better Dungeon Loot** automates the tedious parts of
-group loot in Mists of Pandaria Classic (5.5.4) and Burning Crusade Classic
-Anniversary (2.5.6) dungeons and gives you a clean, compact loot-roll log.
+group loot in Mists of Pandaria Classic (5.5.4), Burning Crusade Classic
+Anniversary (2.5.6), and WoW Forever (1.60.1) dungeons and gives you a clean,
+compact loot-roll log.
 
 ## Features
 - **Auto-greed** drops your character can't use — choose between "anything I can't
@@ -10,9 +11,9 @@ Anniversary (2.5.6) dungeons and gives you a clean, compact loot-roll log.
   that isn't an upgrade".
 - **Auto-confirm** the "this will bind to you" popups.
 - **Loot log window** that replaces Blizzard's centre-screen roll frames: roll
-  Need / Greed / Pass / Disenchant right from the window, with the item that needs
-  a roll pulsing for attention and a countdown bar (green → yellow → red) showing
-  how long you have left to roll.
+  Need / Greed / Pass and other available choices right from the window. The item
+  that needs a roll pulses for attention, with a countdown bar (green → yellow →
+  red) showing how long you have left to roll.
 - **See who rolled Need** — class-coloured circles with a crown over the winner
   (spot ninja looters at a glance).
 - **Optional**: auto-greed gems, reagents & materials; auto-greed greens or
@@ -43,7 +44,8 @@ Run `./package.sh` from a clean release commit tagged with the `.toc` version.
 It creates a ZIP containing
 only `BetterDungeonLoot/BetterDungeonLoot.toc` and
 `BetterDungeonLoot/BetterDungeonLoot.lua`. On the CurseForge file page, tag the
-upload for both Mists of Pandaria Classic and Burning Crusade Classic Anniversary.
+upload for Mists of Pandaria Classic, Burning Crusade Classic Anniversary, and
+WoW Forever.
 
 ## License
 Personal project; do as you like.

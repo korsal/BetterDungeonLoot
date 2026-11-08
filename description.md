@@ -16,7 +16,7 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 
 **A clean loot log instead of centre-screen clutter.** Blizzard's roll frames are hidden and replaced by a small, movable window:
 
-*   Items that still need your decision are pinned to the top and **pulse** for attention — roll Need / Greed / Pass / Disenchant right there, with a **countdown bar** (green → yellow → red) showing how long you have left to roll.
+*   Items that still need your decision are pinned to the top and **pulse** for attention — choose Need / Greed / Pass or another available roll (including Transmog in WoW Forever) right there, with a **countdown bar** (green → yellow → red) showing how long you have left to roll.
 *   Once rolled, the item shows **who rolled Need** as class-coloured circles, with a crown over the winner — great for spotting ninja looters.
 *   Closed the window? A drop that needs a roll **opens it automatically**, then closes again once there's nothing left to roll.
 *   **Ctrl+Right-click** an item to try it on in the Dressing Room.
@@ -41,4 +41,4 @@ By default it only acts in dungeons and raids, so the open world is untouched.
 *   Right-click it, or type `/bdl config`, to open settings.
 *   `/bdl` lists all commands.
 
-Built for **Mists of Pandaria Classic (5.5.4)** and **Burning Crusade Classic Anniversary (2.5.6)**.
+Built for **Mists of Pandaria Classic (5.5.4)**, **Burning Crusade Classic Anniversary (2.5.6)**, and **WoW Forever (1.60.1)**. One download supports all three clients.
