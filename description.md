@@ -28,7 +28,7 @@ Tired of clicking Need / Greed / Pass on every single dungeon drop — and then 
 
 ![bdl settings](https://media.forgecdn.net/attachments/1779/568/screenshot-2026-07-08-071630-png.png)
 
-*   Optionally auto-greed gems/reagents/materials, all green (uncommon) items, or drops for a slot where you already wear an heirloom.
+*   Optionally auto-greed gems/reagents/materials, recipes for professions you don't have, all green (uncommon) items, or drops for a slot where you already wear an heirloom.
 *   "Wrong armor type" mode also greeds weapons your character can't use.
 *   Minimap button (left-click: window, right-click: settings).
 *   Settings panel: rows shown (1–5), history size (10–100), auto-greed mode, and more.

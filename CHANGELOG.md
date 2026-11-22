@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.1] - 2026-11-22
+### Fixed
+- WoW Forever now uses its available item-info API, restoring automatic Greed
+  for materials, green items, and armor covered by the selected rule.
+- A new roll that needs a decision opens the loot window even when item data is
+  still loading or the previous window was closed.
+- Recipes for professions the character does not have are greeded in every
+  auto-greed mode. Recipes and materials no longer wait on Pawn's gear check.
+
+### Added
+- `/bdl mode` and `/bdl scope` commands to choose the auto-greed rule and where
+  automatic actions apply.
+- `/bdl status` now reports the last roll decision and relevant client state.
+
 ## [1.5.0] - 2026-11-08
 ### Added
 - WoW Forever (1.60.1) compatibility: its loot-history API and Transmog roll

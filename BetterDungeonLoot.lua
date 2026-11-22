@@ -7,6 +7,7 @@
 local ADDON_NAME = ...
 local interfaceVersion = tonumber((select(4, GetBuildInfo()))) or 0
 local IS_FOREVER = interfaceVersion >= 16000 and interfaceVersion < 17000
+local GetItemInfo = GetItemInfo or (C_Item and C_Item.GetItemInfo)
 
 local PREFIX = "|cff33ff99BetterDungeonLoot|r: "
 local function Print(msg)
@@ -67,6 +68,8 @@ end
 
 local db  -- BetterDungeonLootDB after login
 local log = {}  -- shared with the loot-history adapter below
+local lastAutoRollReason
+local startLootRollCount = 0
 
 --------------------------------------------------------------------------------
 -- Scope check
@@ -213,19 +216,58 @@ end
 -- Gem (3), Reagent (5), Trade Goods (7) — the "materials" bucket
 local RESOURCE_CLASSES = { [3] = true, [5] = true, [7] = true }
 
-local function DecideRoll(rollID, canNeed, quality)
-    local link = GetLootRollItemLink and GetLootRollItemLink(rollID)
-    if not link then return "leave" end
+-- Recipe item subclasses map to profession skill lines. A missing profession
+-- makes the recipe safe to Greed; an unknown subclass stays a manual choice.
+local RECIPE_PROFESSION_SKILLS = {
+    [1] = 165,  -- Leatherworking
+    [2] = 197,  -- Tailoring
+    [3] = 202,  -- Engineering
+    [4] = 164,  -- Blacksmithing
+    [5] = 185,  -- Cooking
+    [6] = 171,  -- Alchemy
+    [7] = 129,  -- First Aid
+    [8] = 333,  -- Enchanting
+    [9] = 356,  -- Fishing
+    [10] = 755, -- Jewelcrafting
+    [11] = 773, -- Inscription
+}
+
+local function MissingRecipeProfession(subclassID)
+    local required = RECIPE_PROFESSION_SKILLS[subclassID]
+    if not required or not (GetProfessions and GetProfessionInfo) then return nil end
+    local ok, prof1, prof2, archaeology, fishing, cooking, firstAid = pcall(GetProfessions)
+    if not ok then return nil end
+    -- GetProfessions has fixed slots and may leave holes; ipairs would stop early.
+    local slots = { prof1, prof2, archaeology, fishing, cooking, firstAid }
+    for slot = 1, 6 do
+        local index = slots[slot]
+        if index then
+            local infoOK, _, _, _, _, _, _, skillLine = pcall(GetProfessionInfo, index)
+            if not infoOK or not skillLine then return nil end
+            if skillLine == required then return false end
+        end
+    end
+    return true
+end
+
+local function DecideRoll(rollID, canNeed, quality, link)
+    -- The roll's quality is available before the item cache has filled in its
+    -- link on some clients.  A green item needs no class/subclass lookup.
+    if db.autoGreedGreens and quality == 2 then
+        return "greed"
+    end
+    link = link or (GetLootRollItemLink and GetLootRollItemLink(rollID))
+    if not link then return "retry" end
     local _, _, _, _, _, _, _, _, equipLoc, _, _, classID, subclassID = GetItemInfo(link)
+    if not classID then return "retry" end
 
     -- gems / reagents / crafting materials
     if db.autoGreedResources and classID and RESOURCE_CLASSES[classID] then
         return "greed"
     end
 
-    -- all green (uncommon) items
-    if db.autoGreedGreens and quality == 2 then
-        return "greed"
+    if classID == 9 and MissingRecipeProfession(subclassID) then
+        return "greed", true
     end
 
     -- slot is filled by a still-scaling heirloom: keep the heirloom no matter what
@@ -395,6 +437,7 @@ local rows = {}
 -- log[1] = newest
 local scrollOffset = 0   -- how many newest entries are scrolled past
 local autoOpened = false -- window was popped open by a roll (auto-close when done)
+local dismissedRolls = setmetatable({}, { __mode = "k" }) -- X dismisses only the current rolls
 local UpdateLog          -- forward declaration
 
 local function IsLogShown()
@@ -583,9 +626,10 @@ end
 
 -- for the "don't auto-greed upgrades" rule: ready(item loaded?), isUpgrade
 local function PawnUpgradeCheck(link)
-    if not (link and PawnIsReady and PawnIsReady() and PawnGetItemData and PawnIsItemAnUpgrade) then
+    if not PawnLoaded() then
         return true, false
     end
+    if not (link and PawnIsReady and PawnIsReady()) then return false, false end
     local ok, item = pcall(PawnGetItemData, link)
     if not ok then return true, false end
     if not item or not item.Link then return false, false end  -- not loaded yet
@@ -880,6 +924,9 @@ local function CreateLogFrame()
     close:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -2, -2)
     close:SetScript("OnClick", function()
         autoOpened = false
+        for _, e in ipairs(log) do
+            if e.active and not e.myRoll then dismissedRolls[e] = true end
+        end
         db.logShown = false
         logFrame:Hide()
     end)
@@ -1056,18 +1103,11 @@ function UpdateLog()
 end
 
 local function AddRoll(rollID, action, rollTime)
-    local texture, name, _, quality, bop, canNeed, canGreed, canDE, _, _, _, _, canTransmog = GetLootRollItemInfo(rollID)
-    local link = GetLootRollItemLink and GetLootRollItemLink(rollID)
     local e = {
-        rollID = rollID, link = link, name = name, texture = texture,
-        quality = quality or 1, bop = bop,
-        canNeed = canNeed, canGreed = canGreed, canDE = canDE, canTransmog = canTransmog,
+        rollID = rollID, quality = 1,
         action = action, active = true, players = nil, auto = (action ~= "leave"),
         rollTime = rollTime,
     }
-    if IS_FOREVER and C_LootHistory and C_LootHistory.GetLootHistoryTime then
-        e.historyTime = C_LootHistory.GetLootHistoryTime()
-    end
     if action == "greed" then e.myRoll = 2
     elseif action == "need" then e.myRoll = 1
     elseif action == "de" then e.myRoll = 3 end
@@ -1078,6 +1118,24 @@ local function AddRoll(rollID, action, rollTime)
     table.insert(log, 1, e)
     while #log > (db.storageMax or STORAGE_MAX) do table.remove(log) end
     scrollOffset = 0  -- jump to the top so the new item is visible
+
+    -- Forever can fire START_LOOT_ROLL before all item data is ready. Keep the
+    -- pending entry even if a client API fails so the player still gets a roll UI.
+    local ok, texture, name, _, quality, bop, canNeed, canGreed, canDE,
+        _, _, _, _, canTransmog = pcall(GetLootRollItemInfo, rollID)
+    if ok then
+        e.texture, e.name, e.quality, e.bop = texture, name, quality or 1, bop
+        e.canNeed, e.canGreed, e.canDE, e.canTransmog = canNeed, canGreed, canDE, canTransmog
+    end
+    if GetLootRollItemLink then
+        local linkOK, link = pcall(GetLootRollItemLink, rollID)
+        if linkOK then e.link = link end
+    end
+    if IS_FOREVER and C_LootHistory and C_LootHistory.GetLootHistoryTime then
+        local timeOK, historyTime = pcall(C_LootHistory.GetLootHistoryTime)
+        if timeOK then e.historyTime = historyTime end
+    end
+    return e
 end
 
 local function RefreshPlayers()
@@ -1128,8 +1186,20 @@ local function ShowLog()
     UpdateLog()
 end
 
+local function ShowPendingRoll(e)
+    if dismissedRolls[e] then
+        UpdateLog()
+        return
+    end
+    if not IsLogShown() then autoOpened = true end
+    ShowLog()
+end
+
 local function HideLog()
     db.logShown = false
+    for _, e in ipairs(log) do
+        if e.active and not e.myRoll then dismissedRolls[e] = true end
+    end
     if logFrame then logFrame:Hide() end
 end
 
@@ -1466,6 +1536,7 @@ local function AutoRoll_Apply(e, rollID, decision)
     e.myRoll = rt
     e.action = (decision == "disenchant") and "de" or decision
     e.auto = true
+    lastAutoRollReason = (e.name or tostring(rollID)) .. ": auto-" .. decision
     UpdateLog()
 end
 
@@ -1473,40 +1544,113 @@ local function AutoRoll_Leave(e)
     e.action = "leave"
     e.auto = false
     e.myRoll = nil
-    if not IsLogShown() then autoOpened = true end
-    ShowLog()
+    ShowPendingRoll(e)
 end
 
-local DecideAndApply
+local DecideAndApply, SafeDecideAndApply
 DecideAndApply = function(rollID, tries)
     local e
     for _, x in ipairs(log) do if x.rollID == rollID then e = x break end end
-    if not e or e.myRoll or not e.active then return end  -- already handled/gone
+    if not e or e.myRoll or not e.active then
+        if (tries or 0) == 0 then
+            lastAutoRollReason = "roll " .. tostring(rollID) .. ": already resolved before decision"
+        end
+        return
+    end
 
-    if not db.autoRoll or not InScope() then AutoRoll_Leave(e) return end
+    if not db.autoRoll then
+        lastAutoRollReason = (e.name or tostring(rollID)) .. ": auto-roll disabled"
+        AutoRoll_Leave(e)
+        return
+    end
+    if not InScope() then
+        local inInstance, instanceType = IsInInstance()
+        lastAutoRollReason = (e.name or tostring(rollID)) .. ": outside scope (IsInInstance="
+            .. tostring(inInstance) .. ", type=" .. tostring(instanceType) .. ")"
+        AutoRoll_Leave(e)
+        return
+    end
 
-    local _, _, _, quality, _, canNeed, canGreed = GetLootRollItemInfo(rollID)
-    if not canGreed then AutoRoll_Leave(e) return end
+    local _, name, _, quality, _, canNeed, canGreed = GetLootRollItemInfo(rollID)
+    e.link = (GetLootRollItemLink and GetLootRollItemLink(rollID)) or e.link
+    e.name = name or e.name
+    e.quality = quality or e.quality
+    quality = e.quality
+    e.canNeed, e.canGreed = canNeed, canGreed
+    local function Retry(reason)
+        if (tries or 0) < 10 and C_Timer and C_Timer.After then
+            lastAutoRollReason = (e.name or tostring(rollID)) .. ": waiting for " .. reason
+            C_Timer.After(0.25, function() SafeDecideAndApply(rollID, (tries or 0) + 1) end)
+            ShowPendingRoll(e)
+            return true
+        end
+        lastAutoRollReason = (e.name or tostring(rollID)) .. ": " .. reason .. " unavailable; manual roll"
+        AutoRoll_Leave(e)
+        return true
+    end
+    if not name or canGreed == nil then
+        Retry("loot roll data")
+        return
+    end
+    if not canGreed then
+        lastAutoRollReason = (e.name or tostring(rollID)) .. ": Greed unavailable"
+        AutoRoll_Leave(e)
+        return
+    end
 
-    local decision, final = DecideRoll(rollID, canNeed, quality)
-    if decision == "leave" then AutoRoll_Leave(e) return end
+    local decision, final = DecideRoll(rollID, canNeed, quality, e.link)
+    if decision == "retry" then
+        Retry("item data")
+        return
+    end
+    if decision == "leave" then
+        lastAutoRollReason = (e.name or tostring(rollID)) .. ": rule left item for manual roll"
+        AutoRoll_Leave(e)
+        return
+    end
 
     -- Hold back items Pawn flags as an upgrade (waiting for Pawn to load first).
     -- Always applies in the "greed non-upgrades (Pawn)" mode, and when the
     -- "never auto-greed a Pawn upgrade" option is on for the other modes.
     -- A "final" greed (the heirloom-slot rule) skips this: keeping the heirloom
     -- deliberately overrides Pawn, which may rate the drop as an upgrade.
-    if not final and (db.autoRollMode == "pawn" or db.dontGreedUpgrades) and decision == "greed" then
+    -- Pawn compares equipment.  Gems, materials, and recipes have no equipment
+    -- slot, so do not hold their Greed roll while Pawn tries to parse them.
+    local equipLoc, _, _, classID
+    if e.link then equipLoc, _, _, classID = select(9, GetItemInfo(e.link)) end
+    if not classID and PawnLoaded() and (db.autoRollMode == "pawn" or db.dontGreedUpgrades) then
+        Retry("item data")
+        return
+    end
+    local pawnRelevant = equipLoc ~= nil and equipLoc ~= "" and classID ~= 9
+    if not final and pawnRelevant and (db.autoRollMode == "pawn" or db.dontGreedUpgrades) and decision == "greed" then
         local ready, isUp = PawnUpgradeCheck(e.link)
-        if isUp then AutoRoll_Leave(e) return end
-        if not ready and (tries or 0) < 5 and C_Timer and C_Timer.After then
-            C_Timer.After(0.5, function() DecideAndApply(rollID, (tries or 0) + 1) end)
-            UpdateLog()  -- keep it visible as pending while we wait
+        if isUp then
+            lastAutoRollReason = (e.name or tostring(rollID)) .. ": Pawn marked as upgrade"
+            AutoRoll_Leave(e)
+            return
+        end
+        if not ready then
+            Retry("Pawn item data")
             return
         end
     end
 
     AutoRoll_Apply(e, rollID, decision)
+end
+
+SafeDecideAndApply = function(rollID, tries)
+    local ok, err = pcall(DecideAndApply, rollID, tries)
+    if ok then return end
+    lastAutoRollReason = "roll " .. tostring(rollID) .. ": decision error: " .. tostring(err)
+    Print(lastAutoRollReason)
+    for _, e in ipairs(log) do
+        if e.rollID == rollID and e.active and not e.myRoll then
+            local shown, showErr = pcall(AutoRoll_Leave, e)
+            if not shown then Print("couldn't show roll window: " .. tostring(showErr)) end
+            break
+        end
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -1558,8 +1702,14 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         Print("loaded. /bdl for commands.")
 
     elseif event == "START_LOOT_ROLL" then
-        AddRoll(arg1, "leave", arg2)  -- arg2 = total roll time (ms); dispatcher decides the auto-roll
-        DecideAndApply(arg1, 0)
+        startLootRollCount = startLootRollCount + 1
+        lastAutoRollReason = "START_LOOT_ROLL received (ID " .. tostring(arg1) .. ")"
+        local e = AddRoll(arg1, "leave", arg2)  -- arg2 = total roll time (ms)
+        SafeDecideAndApply(arg1, 0)
+        -- A client API error must never leave a live roll invisible.
+        if e.active and not e.myRoll and not IsLogShown() and not dismissedRolls[e] then
+            ShowPendingRoll(e)
+        end
         if IS_FOREVER then RefreshPlayers() end
 
     elseif event == "CANCEL_LOOT_ROLL" then
@@ -1624,10 +1774,22 @@ local function DumpHeirlooms()
 end
 
 local function ShowStatus()
+    local inInstance, instanceType = IsInInstance()
+    local activeRolls = "unavailable"
+    if GetActiveLootRollIDs then
+        local ok, ids = pcall(GetActiveLootRollIDs)
+        if ok and type(ids) == "table" then activeRolls = tostring(#ids) end
+    end
     Print("status:")
-    Print(("  enabled: %s | scope: %s"):format(tostring(db.enabled), db.scope))
+    Print(("  enabled: %s | scope: %s | IsInInstance: %s (%s)"):format(
+        tostring(db.enabled), db.scope, tostring(inInstance), tostring(instanceType)))
     Print(("  autoConfirmBind (F1): %s"):format(tostring(db.autoConfirmBind)))
-    Print(("  autoRoll (F3): %s | fitting: %s"):format(tostring(db.autoRoll), db.fittingBehavior))
+    Print(("  autoRoll (F3): %s | mode: %s | fitting: %s"):format(
+        tostring(db.autoRoll), tostring(db.autoRollMode), db.fittingBehavior))
+    Print("  last roll: " .. (lastAutoRollReason or "none since login"))
+    Print(("  START_LOOT_ROLL: %d | active roll IDs: %s | opt out: %s"):format(
+        startLootRollCount, activeRolls,
+        tostring(GetOptOutOfLoot and GetOptOutOfLoot() or false)))
     Print(("  showNeeders (F4): %s"):format(tostring(db.showNeeders)))
     Print(("  hideBlizzardRoll: %s | logShown: %s"):format(tostring(db.hideBlizzardRoll), tostring(db.logShown)))
 end
@@ -1643,6 +1805,8 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         Print("  /bdl test     - fill the window with sample rows (preview layout)")
         Print("  /bdl config   - open the settings panel")
         Print("  /bdl autoroll - toggle auto-greed of wrong-armor items (F3)")
+        Print("  /bdl mode cantuse|armor|pawn - choose auto-greed rule")
+        Print("  /bdl scope instance|everywhere - where automatic actions apply")
         Print("  /bdl fitting  - fitting items: leave <-> auto-need")
         Print("  /bdl needers  - toggle showing who rolled Need (F4)")
         Print("  /bdl hideblizz- toggle hiding Blizzard roll frames")
@@ -1662,6 +1826,21 @@ SlashCmdList["BETTERDUNGEONLOOT"] = function(msg)
         db.autoRoll = not db.autoRoll
         if logFrame and logFrame.autoCB then logFrame.autoCB:SetChecked(db.autoRoll) end
         Print("autoRoll (F3): " .. tostring(db.autoRoll))
+    elseif msg == "mode cantuse" or msg == "mode armor" or msg == "mode pawn" then
+        local mode = msg:match("^mode (.+)$")
+        if mode == "pawn" and not PawnLoaded() then
+            Print("Pawn mode requires Pawn to be loaded.")
+        else
+            db.autoRollMode = mode
+            Print("auto-greed mode: " .. mode)
+        end
+    elseif msg == "mode" then
+        Print("auto-greed mode: " .. db.autoRollMode .. " (use /bdl mode cantuse|armor|pawn)")
+    elseif msg == "scope instance" or msg == "scope everywhere" then
+        db.scope = msg:match("^scope (.+)$")
+        Print("automatic actions scope: " .. db.scope)
+    elseif msg == "scope" then
+        Print("automatic actions scope: " .. db.scope .. " (use /bdl scope instance|everywhere)")
     elseif msg == "fitting" then
         db.fittingBehavior = (db.fittingBehavior == "need") and "leave" or "need"
         Print("fitting items behavior: " .. db.fittingBehavior)

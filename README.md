@@ -17,7 +17,7 @@ compact loot-roll log.
 - **See who rolled Need** — class-coloured circles with a crown over the winner
   (spot ninja looters at a glance).
 - **Optional**: auto-greed gems, reagents & materials; auto-greed greens or
-  heirloom-slot drops.
+  heirloom-slot drops. Recipes for professions you do not have are also greeded.
 - Movable window, minimap button, and a settings panel.
 
 By default it only acts inside dungeons and raids.
@@ -27,6 +27,8 @@ By default it only acts inside dungeons and raids.
 - `/bdl` — command help
 - `/bdl config` — open settings (rows shown, history size, auto-greed mode, …)
 - `/bdl log` — show/hide the window
+- `/bdl mode armor` — greed armor types that do not fit your class and level
+- `/bdl scope everywhere` — also apply automatic actions outside instances
 
 ## Install
 Keep this Git checkout at `World of Warcraft/BetterDungeonLoot`, outside the
