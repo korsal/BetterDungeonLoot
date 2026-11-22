@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.2] - 2026-11-22
+### Fixed
+- Automatically Greed thrown weapons a character cannot equip, even when WoW
+  Forever incorrectly makes Need available for the roll.
+
 ## [1.5.1] - 2026-11-22
 ### Fixed
 - WoW Forever now uses its available item-info API, restoring automatic Greed

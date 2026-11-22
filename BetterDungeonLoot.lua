@@ -111,6 +111,9 @@ end
 local ITEM_CLASS_ARMOR = 4
 local ITEM_CLASS_WEAPON = 2
 local ARMOR_CLOTH, ARMOR_LEATHER, ARMOR_MAIL, ARMOR_PLATE = 1, 2, 3, 4
+-- Keep the roll manual for classes that may use thrown weapons. Other classes
+-- cannot equip them even if Forever incorrectly offers a Need roll.
+local THROWN_WEAPON_CLASSES = { WARRIOR = true, ROGUE = true, HUNTER = true }
 
 local BODY_ARMOR_SLOTS = {
     INVTYPE_HEAD = true, INVTYPE_SHOULDER = true, INVTYPE_CHEST = true,
@@ -268,6 +271,13 @@ local function DecideRoll(rollID, canNeed, quality, link)
 
     if classID == 9 and MissingRecipeProfession(subclassID) then
         return "greed", true
+    end
+
+    if classID == ITEM_CLASS_WEAPON and equipLoc == "INVTYPE_THROWN" then
+        local _, class = UnitClass("player")
+        if class and not THROWN_WEAPON_CLASSES[class] then
+            return "greed", true
+        end
     end
 
     -- slot is filled by a still-scaling heirloom: keep the heirloom no matter what
